@@ -77,7 +77,7 @@ assert.deepEqual([...studioActions.STUDIO_IK_CHAIN_TRACKS], IK_TRACKS.map(track 
 assert.deepEqual([...studioActions.STUDIO_IK_JOINT_TRACKS], [...FK_TRACKS.map(track => track.id), ...FINGER_TRACK_IDS]);
 const setIkKey = studioActionDeclaration("character.setIkKey").input;
 assert.deepEqual([...setIkKey.required].sort(), ["characterId", "frame", "tracks"]);
-assert.deepEqual(Object.keys(setIkKey.properties.tracks.properties).sort(), [...[...IK_TRACKS, ...FK_TRACKS].map(track => track.id), ...FINGER_TRACK_IDS].sort());
+assert.deepEqual(Object.keys(setIkKey.properties.tracks.properties).sort(), [...[...IK_TRACKS, ...FK_TRACKS].map(track => track.id), ...FINGER_TRACK_IDS, "placement"].sort());
 const unit = { x: 0, y: 0, z: 0, w: 1 };
 const ikArgs = { characterId: "char-a", frame: 12, tracks: { leftHand: { q: [unit, unit, unit], baseQ: [unit, unit, unit] }, hips: { q: [unit], p: { x: 0, y: 0.9, z: 0 }, basePos: { x: 0, y: 1, z: 0 } } } };
 assert.deepEqual(validateStudioSchema(setIkKey, ikArgs), ikArgs);
