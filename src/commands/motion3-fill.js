@@ -12,7 +12,7 @@ const openObject = { type: "object", properties: {}, required: [], additionalPro
 const FILL_TIMEOUT_MS = 90000;
 
 export const declarations = Object.freeze([
-	{ id: "motion.fill", label: "Fill motion between key poses", kind: "job", domain: "motion", timeoutMs: 120000, description: HELP.fill,
+	{ id: "motion.fill", label: "Fill motion between key poses", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.fill,
 		input: { type: "object", properties: { characterId: id, spec: openObject, base: { type: "string", pattern: "^spec-[0-9a-f]{12}$" },
 			at: { type: "integer", minimum: 0 }, install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } },
 		required: ["characterId"], additionalProperties: false } },
