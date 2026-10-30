@@ -353,7 +353,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		pruneStudioSessions();
 		const cookies = parseCookies(req), supplied = cookies.studio_owner;
 		let owner = studioOwnerTokens.get(sessionId);
-		if (!owner && create) { owner = randomBytes(24).toString("hex"); studioOwnerTokens.set(sessionId, owner); return owner; }
+		// one owner per browser: a new session adopts the token the browser already holds, so its cookie never locks the browser out of
+		// its other sessions (another tab, another conversation, another Studio on this host: the cookie ignores the port)
+		if (!owner && create) { owner = /^[0-9a-f]{48}$/.test(supplied ?? "") ? supplied : randomBytes(24).toString("hex"); studioOwnerTokens.set(sessionId, owner); return owner; }
 		if (!owner || supplied !== owner) throw Object.assign(new Error("Studio session owner mismatch."), { code: "AUTH_REQUIRED" });
 		return owner;
 	};
