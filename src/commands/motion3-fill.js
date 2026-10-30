@@ -43,7 +43,7 @@ const authoredFrames = sp => [...new Set((sp?.keys ?? []).filter(k => !isFillKey
  * one line per gap, the authored keys the fill moved (retime, playground) and the guides, at most MAX_LINES of each. Exported for the test.
  */
 export function fillBrief(filled, source) {
-	const gap = g => (g.skipped ? `f${g.f.join("-")} skipped (${g.skipped})` : `${g.f ? `f${g.f.join("-")}` : `to f${g.key}`} ${g.tokens} tokens, ${g.targets} target${g.targets === 1 ? "" : "s"}${g.modelWants ? `, model wants ${g.modelWants.exact ?? g.modelWants}` : ""}${g.early ? `, early ${g.early}` : ""}`);
+	const gap = g => (g.kept ? `f${g.f.join("-")} kept` : g.skipped ? `f${g.f.join("-")} skipped (${g.skipped})` : `${g.f ? `f${g.f.join("-")}` : `to f${g.key}`} ${g.tokens} tokens, ${g.targets} target${g.targets === 1 ? "" : "s"}${g.modelWants ? `, model wants ${g.modelWants.exact ?? g.modelWants}` : ""}${g.early ? `, early ${g.early}` : ""}`);
 	const was = authoredFrames(source), now = authoredFrames(filled.spec);
 	// a playground fill drops its middle keys (guides): then only the last key is paired
 	const moved = (was.length === now.length ? was.map((f, i) => [f, now[i]]) : [[was.at(-1), now.at(-1)]]).filter(([a, b]) => a !== b);
@@ -77,7 +77,7 @@ export function autoFill(ports, character, spec) {
 	if (!fetcher || spec?.fill !== true || authored < 2) return { spec, fill: null };
 	if (spec.use?.length || spec.generators?.length) return { spec, fill: { note: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
 	return requestFill(fetcher, { spec, model: character.model, auto: true, objects: ports.state?.().objects ?? [] }).then(
-		filled => ({ spec: filled.spec, fill: { ...fillBrief(filled, spec), ...(filled.promoted ? { promoted: filled.promoted } : {}) } }),
+		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), spans: filled.spans, ...(filled.dropped ? { dropped: filled.dropped } : {}), ...(filled.notes ? { notes: filled.notes } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
 		error => ({ spec, fill: { note: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
 }
 

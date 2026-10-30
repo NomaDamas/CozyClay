@@ -87,7 +87,44 @@ export function denseChannels(motion, fa, fb, baked, endBaked = baked) {
 	}
 	const planted = out.map((_, i) => motion[Math.round(i / last * (n - 1))].contacts);
 	lockFeet(out, planted);
+	stepFeet(out);
 	out.forEach(saneChannels);
+	return out;
+}
+
+const STEP_MIN_M = 0.02, STEP_FROM = 0.6, STEP_LIFT = 0.03;
+/**
+ * A foot the model keeps planted over the whole gap while the authored keys move it (lockFeet then slides it straight from key
+ * to key, QA SLIDE on every frame) holds its start until the hips have come STEP_FROM of the way from the last height, then
+ * the feet step to the end key one after the other on a low arc (STEP_LIFT, at most 15% of the distance), the other foot
+ * holding meanwhile: the legs go out as the body sits, never both in the air. Mutates out (and out.holds).
+ */
+export function stepFeet(out) {
+	const last = out.length - 1, y = i => out[i].root?.[1];
+	if (last < 6 || y(0) === undefined) return out;
+	const drop = y(0) - y(last);
+	let from = Math.round(last * 0.4);
+	if (Math.abs(drop) > 0.05) { from = 0; while (from < last && (y(from) - y(last)) / drop > STEP_FROM) from++; }
+	from = Math.max(1, Math.min(from, last - 6));
+	const sides = ["l", "r"].filter(k => {
+		const a = out[0][`foot_${k}`], b = out[last][`foot_${k}`];
+		return out.holds?.[k]?.some(([i, j]) => i === 0 && j === last) && a && b && Math.hypot(b[0] - a[0], b[2] - a[2]) >= STEP_MIN_M;
+	});
+	const mid = Math.round((from + last) / 2);
+	sides.forEach((k, n) => {
+		const [s0, s1] = sides.length === 1 ? [from, last] : n === 0 ? [from, mid] : [mid, last];
+		const a = out[0][`foot_${k}`], b = out[last][`foot_${k}`], lift = Math.min(STEP_LIFT, 0.15 * Math.hypot(b[0] - a[0], b[2] - a[2]));
+		for (const ch of [`foot_${k}`, `fyaw_${k}`, `fpitch_${k}`]) {
+			const A = out[0][ch], B = out[last][ch];
+			if (A === undefined) continue;
+			for (let i = 1; i < last; i++) {
+				const t = Math.max(0, Math.min(1, (i - s0) / (s1 - s0)));
+				out[i][ch] = lerp(A, B, 1 - fade(t));
+				if (ch === `foot_${k}` && t > 0 && t < 1) out[i][ch][1] += lift * Math.sin(Math.PI * t);
+			}
+		}
+		out.holds[k] = [[0, s0], [s1, last]];
+	});
 	return out;
 }
 

@@ -12,7 +12,7 @@ import { somaPose } from "../../src/motion3/bricks/reverse.js";
 import { decodeMotion, MIN_TOKENS } from "../../src/motion3/bricks/model-io.js";
 import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
 import { STEP } from "../../src/motion3/bricks/fill.js";
-import { correctMotion } from "../../src/motion3/bricks/fill-native-core.js";
+import { correctMotion, stepFeet } from "../../src/motion3/bricks/fill-native-core.js";
 import { fillSpecNative } from "../../src/motion3/bricks/fill-native.js";
 import { fillBrief, declarations } from "../../src/commands/motion3-fill.js";
 import { validateStudioSchema } from "../../src/studio-agent-protocol.js";
@@ -86,6 +86,18 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 	expect("playground: the last key closes the take", fs[1] === r.spec.frames - 1 && r.guides.at(-1).at === fs[1], `${fs} / ${r.spec.frames}`);
 	expect("playground: the guide step hands over 8 frames early", r.gaps[0].early === 8 && r.gaps[1].early === 0, JSON.stringify(r.gaps));
 	expect("playground: installs as is (fix: false)", r.spec.fix === false && compile(r.spec).out.frames.length === r.spec.frames, `${compile(r.spec).out.frames.length} vs ${r.spec.frames}`);
+}
+
+// a sit whose feet the model keeps planted while the authored keys put the legs out: hold, then one foot after the other
+{
+	const n = 23, out = Array.from({ length: n }, (_, i) => ({ root: [0, 0.99 - 0.82 * i / (n - 1), 0], foot_l: [0.1, 0.105, 0.4 * i / (n - 1)], foot_r: [-0.1, 0.105, 0.4 * i / (n - 1)] }));
+	out.holds = { l: [[0, n - 1]], r: [[0, n - 1]] };
+	stepFeet(out);
+	const moving = side => out.map((o, i) => i > 0 && Math.abs(o[`foot_${side}`][2] - out[i - 1][`foot_${side}`][2]) > 1e-6);
+	const L = moving("l"), Rr = moving("r"), firstL = L.indexOf(true);
+	expect("stepFeet: the feet hold until the hips are most of the way down", firstL > 8 && out[firstL - 1].foot_l[2] === 0, `${firstL}`);
+	expect("stepFeet: never both feet moving on one frame", !L.some((m, i) => m && Rr[i]), JSON.stringify([L, Rr].map(a => a.map(Number).join(""))));
+	expect("stepFeet: both end on the authored key, lifted in between", out.at(-1).foot_r[2] === 0.4 && out.some(o => o.foot_l[1] > 0.105), JSON.stringify(out.at(-1)));
 }
 
 // motion.fill's answer: a brief that fits the receipt, with the keys the fill moved; timing is checked by the dev server's route
