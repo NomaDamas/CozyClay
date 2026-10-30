@@ -19,15 +19,18 @@ export const declarations = Object.freeze([
 		input: { type: "object", properties: { characterId: id, spec: openObject, base: { type: "string", pattern: "^spec-[0-9a-f]{12}$" },
 			patch: { type: "array", items: openObject, maxItems: 64 }, at: { type: "integer", minimum: 0 }, timing: { type: "string", enum: ["exact", "free", "retime", "playground"] }, gate: { type: "boolean" }, install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } },
 		required: ["characterId"], additionalProperties: false } },
+	{ id: "motion.primitive", label: "Vault or jump over a block (MotionBricks Smart Primitive)", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.primitive,
+		input: { type: "object", properties: { characterId: id, objectId: id, kind: { type: "string", enum: ["vault", "jump"] }, lane: { type: "number" },
+			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } }, required: ["characterId", "objectId", "kind"], additionalProperties: false } },
 ]);
 
 const NO_SERVER = "MotionBricks fill needs the local dev server (npm run dev): this Studio has no Node side to run the model.";
 
 /** POST the authored spec to the dev server; the filled spec, or a StudioProtocolError. */
-async function requestFill(fetcher, body) {
+async function requestFill(fetcher, body, route = "/agent/motion-fill") {
 	let res;
 	try {
-		res = await fetcher("/agent/motion-fill", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(FILL_TIMEOUT_MS) });
+		res = await fetcher(route, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: AbortSignal.timeout(FILL_TIMEOUT_MS) });
 	} catch (error) {
 		fail("CAPABILITY_MISSING", `${NO_SERVER} (${error.name === "TimeoutError" ? "no answer in 90 s" : error.message})`);
 	}
@@ -99,5 +102,12 @@ export function register(registry, ports) {
 		const fill = fillBrief(filled, source);
 		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install, filled: fill, ...(filled.mode === "native-playground" ? { repair: false, thin: false } : {}) }, context);
 		return { ...r, summary: `${r.summary}${fill.mode ? ` Fill ${fill.mode}, ${fill.keys} keys.` : ""}${fill.moved ? ` The fill moved authored keys ${fill.moved.join(", ")}.` : ""}` };
+	} });
+	// a Smart Primitive's take is the runner's dense spec (it holds its own contacts and block clearance): compiled as is, no repair or thinning
+	registry.register({ ...declarations[1], available: mounted, target: args => args.characterId, async run({ characterId, objectId, kind, lane, install = true }, context) {
+		characterOf(ports, characterId);
+		const made = await requestFill(ports.fetch ?? globalThis.fetch, { kind, objectId, lane, objects: ports.state?.().objects ?? [] }, "/agent/motion-primitive");
+		const r = await registry.get("motion.compile").run({ characterId, spec: { ...made.spec, fix: false }, install, repair: false, thin: false, filled: { mode: `primitive-${kind}`, calls: 0, keys: made.spec.keys.length, gaps: [], ...made.report } }, context);
+		return { ...r, summary: `${r.summary} Smart Primitive ${made.report.seq}: over the block at f${made.report.actionAtFrame ?? "?"}, ${made.report.frames} frames.` };
 	} });
 }

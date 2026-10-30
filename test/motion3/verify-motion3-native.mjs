@@ -17,6 +17,7 @@ import { fillSpecNative } from "../../src/motion3/bricks/fill-native.js";
 import { fillBrief, declarations } from "../../src/commands/motion3-fill.js";
 import { validateStudioSchema } from "../../src/studio-agent-protocol.js";
 import { fillRequest } from "../../mcp/motionbricks/service.mjs";
+import { blockOf, primitiveRequest } from "../../mcp/motionbricks/primitive.mjs";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -115,6 +116,16 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 	expect("action: an unknown timing is refused with INVALID_ARGUMENT", bad === "INVALID_ARGUMENT", String(bad));
 	const refused = await fillRequest({ spec: demo, timing: "fast" }).then(() => null, e => e.code);
 	expect("route: an unknown timing is INVALID_ARGUMENT", refused === "INVALID_ARGUMENT", String(refused));
+}
+
+// motion.primitive's route: the block's box from the editor row, refused unless opted in (the poses are evaluation-licensed)
+{
+	const b = blockOf({ id: "cube", x: 0, y: 0, z: 3, rot: 0, scaleX: 2, scaleY: 0.75, scaleZ: 0.4, footprint: { width: 1, depth: 1 }, height: 1 });
+	expect("primitive: a cube row is a 2 x 0.4 x 0.75 m block at z 3", b.w === 2 && Math.abs(b.d - 0.4) < 1e-9 && b.h === 0.75 && b.z === 3, JSON.stringify(b));
+	const saved = process.env.COZYCLAY_MB_PRIMITIVES; delete process.env.COZYCLAY_MB_PRIMITIVES;
+	const off = await primitiveRequest({ kind: "vault", objectId: "cube", objects: [] }).then(() => null, e => e.code);
+	if (saved !== undefined) process.env.COZYCLAY_MB_PRIMITIVES = saved;
+	expect("primitive: off unless COZYCLAY_MB_PRIMITIVES=1 (CAPABILITY_MISSING)", off === "CAPABILITY_MISSING", String(off));
 }
 
 console.log(failures ? `${failures} failed` : "all passed");
