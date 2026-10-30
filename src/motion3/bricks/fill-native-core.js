@@ -3,7 +3,8 @@
 import { somaFK, toCozyPoint, SOMA_PARENT } from "./soma.js";
 import { MIN_TOKENS, MAX_TOKENS } from "./model-io.js";
 import { frameChannels, unwrapSeries } from "./forward.js";
-import { STEP, lockFeet } from "./fill.js";
+import { STEP, lockFeet, sparseKeys, merge } from "./fill.js";
+import { solePoints } from "../qa/geometry.js";
 import { rangeOf } from "../compiler/vocab.js";
 import { quatFromMat, matFromQuat, mul, T, add, scale, sub } from "../compiler/math.js";
 
@@ -87,8 +88,107 @@ export function denseChannels(motion, fa, fb, baked, endBaked = baked) {
 	}
 	const planted = out.map((_, i) => motion[Math.round(i / last * (n - 1))].contacts);
 	lockFeet(out, planted);
+	stepFeet(out);
 	out.forEach(saneChannels);
 	return out;
+}
+
+const STEP_MIN_M = 0.02, STEP_FROM = 0.6, STEP_LIFT = 0.03;
+/**
+ * A foot the model keeps planted over the whole gap while the authored keys move it (lockFeet then slides it straight from key
+ * to key, QA SLIDE on every frame) holds its start until the hips have come STEP_FROM of the way from the last height, then
+ * the feet step to the end key one after the other on a low arc (STEP_LIFT, at most 15% of the distance), the other foot
+ * holding meanwhile: the legs go out as the body sits, never both in the air. Mutates out (and out.holds).
+ */
+export function stepFeet(out) {
+	const last = out.length - 1, y = i => out[i].root?.[1];
+	if (last < 6 || y(0) === undefined) return out;
+	const drop = y(0) - y(last);
+	let from = Math.round(last * 0.4);
+	if (Math.abs(drop) > 0.05) { from = 0; while (from < last && (y(from) - y(last)) / drop > STEP_FROM) from++; }
+	from = Math.max(1, Math.min(from, last - 6));
+	const sides = ["l", "r"].filter(k => {
+		const a = out[0][`foot_${k}`], b = out[last][`foot_${k}`];
+		return out.holds?.[k]?.some(([i, j]) => i === 0 && j === last) && a && b && Math.hypot(b[0] - a[0], b[2] - a[2]) >= STEP_MIN_M;
+	});
+	const mid = Math.round((from + last) / 2);
+	sides.forEach((k, n) => {
+		const [s0, s1] = sides.length === 1 ? [from, last] : n === 0 ? [from, mid] : [mid, last];
+		const a = out[0][`foot_${k}`], b = out[last][`foot_${k}`], lift = Math.min(STEP_LIFT, 0.15 * Math.hypot(b[0] - a[0], b[2] - a[2]));
+		for (const ch of [`foot_${k}`, `fyaw_${k}`, `fpitch_${k}`]) {
+			const A = out[0][ch], B = out[last][ch];
+			if (A === undefined) continue;
+			for (let i = 1; i < last; i++) {
+				const t = Math.max(0, Math.min(1, (i - s0) / (s1 - s0)));
+				out[i][ch] = lerp(A, B, 1 - fade(t));
+				if (ch === `foot_${k}` && t > 0 && t < 1) out[i][ch][1] += lift * Math.sin(Math.PI * t);
+			}
+		}
+		out.holds[k] = [[0, s0], [s1, last]];
+	});
+	return out;
+}
+
+const GROUND_PASSES = 2, GROUND_CLEAR = 0.003;
+/**
+ * The model's skeleton is not the rig's, and a held ankle under a pitched foot pushes the toe down: either can put a sole
+ * under the floor (QA GROUND across a kneel or a crouch). Compile the gap with its dense keys, read each frame's lowest
+ * sole point (the QA's own heel, ball and tip) and raise that ankle by the depth; twice, since a raised ankle turns the
+ * foot. Only frames under the floor change. Mutates dense; answers how many frame-sides it raised.
+ */
+export function groundSoles(dense, fa, { spec, keys, compile, sk }) {
+	let raised = 0;
+	for (let pass = 0; pass < GROUND_PASSES; pass++) {
+		const frames = compile({ ...spec, keys: merge(keys, sparseKeys(dense, fa, "ground", TOL_SCALE)) }).out.frames;
+		let moved = 0;
+		dense.forEach((ch, i) => {
+			const s = frames[fa + i]?.s;
+			if (!s || i === 0 || i === dense.length - 1) return;
+			for (const [k, side] of [["l", "Left"], ["r", "Right"]]) {
+				const sp = solePoints(sk, s, side), low = Math.min(sp.heel[1], sp.ball[1], sp.tip[1]), foot = ch[`foot_${k}`];
+				if (low < 0 && foot) { ch[`foot_${k}`] = [foot[0], foot[1] - low + GROUND_CLEAR, foot[2]]; moved++; }
+			}
+		});
+		raised += moved;
+		if (!moved) break;
+	}
+	return raised;
+}
+
+const POP_LIMIT = 0.06, POP_ROUNDS = 3;
+const SIDE = { Leg: ["foot", "knee"], Foot: ["foot", "knee", "fpitch", "fyaw"], ToeBase: ["foot", "fpitch"], Arm: ["hand", "elbow"], ForeArm: ["hand", "elbow"], Hand: ["hand", "elbow"] };
+const drives = bone => { const m = /^(Left|Right)(.+)$/.exec(bone); return m ? (SIDE[m[2]] ?? []).map(c => `${c}_${m[1] === "Left" ? "l" : "r"}`) : /^Head|^Neck/.test(bone) ? ["head_pitch", "head_yaw", "spine_pitch"] : ["root"]; };
+/**
+ * A one-frame kick QA calls POP inside the gap (the exact fill squeezing the model's longer move into the authored frames, or the
+ * end correction): on the compiled gap find the frames where that bone's acceleration passes POP_LIMIT and average the channels
+ * that drive it with their neighbours over +-2 frames (the vault runner's pass, tools/motionbricks/vault.mjs); the gap's ends stay.
+ * Mutates dense; answers how many frames it relaxed.
+ */
+export function relaxPops(dense, fa, { spec, keys, compile, sk }) {
+	let relaxed = 0;
+	const last = dense.length - 1;
+	for (let round = 0; round < POP_ROUNDS; round++) {
+		const r = compile({ ...spec, keys: merge(keys, sparseKeys(dense, fa, "pop", TOL_SCALE)) });
+		const pops = (r.qa?.groups ?? []).filter(g => g.kind === "POP" && g.last >= fa && g.first <= fa + last);
+		if (!pops.length) break;
+		const marks = new Map();
+		for (const g of pops) {
+			const bone = g.subject.split(" ")[0], j = sk.index[bone];
+			if (j === undefined) continue;
+			for (let i = 1; i < last; i++) {
+				const [a, b, c] = [i - 1, i, i + 1].map(k => r.out.frames[fa + k]?.s.P[j]);
+				if (!a || !c || Math.hypot(...a.map((v, x) => v - 2 * b[x] + c[x])) <= POP_LIMIT) continue;
+				for (const ch of drives(bone)) { const set = marks.get(ch) ?? new Set(); for (let k = -2; k <= 2; k++) if (i + k > 0 && i + k < last) set.add(i + k); marks.set(ch, set); }
+			}
+		}
+		if (!marks.size) break;
+		for (const [ch, set] of marks) {
+			if (dense[0][ch] === undefined) continue;
+			for (let it = 0; it < 3; it++) { const prev = dense.map(d => d[ch]); for (const i of set) dense[i][ch] = lerp(prev[i], lerp(prev[i - 1], prev[i + 1], 0.5), 0.6); }
+			relaxed += set.size;
+		}
+	}
+	return relaxed;
 }
 
 /** The gap's own token count (its length at 30 fps) and a wider range for asking the model how long it would take. */

@@ -12,8 +12,12 @@ import { somaPose } from "../../src/motion3/bricks/reverse.js";
 import { decodeMotion, MIN_TOKENS } from "../../src/motion3/bricks/model-io.js";
 import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
 import { STEP } from "../../src/motion3/bricks/fill.js";
-import { correctMotion } from "../../src/motion3/bricks/fill-native-core.js";
+import { correctMotion, stepFeet } from "../../src/motion3/bricks/fill-native-core.js";
 import { fillSpecNative } from "../../src/motion3/bricks/fill-native.js";
+import { fillBrief, declarations } from "../../src/commands/motion3-fill.js";
+import { validateStudioSchema } from "../../src/studio-agent-protocol.js";
+import { fillRequest } from "../../mcp/motionbricks/service.mjs";
+import { blockOf, primitiveRequest } from "../../mcp/motionbricks/primitive.mjs";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -83,6 +87,45 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 	expect("playground: the last key closes the take", fs[1] === r.spec.frames - 1 && r.guides.at(-1).at === fs[1], `${fs} / ${r.spec.frames}`);
 	expect("playground: the guide step hands over 8 frames early", r.gaps[0].early === 8 && r.gaps[1].early === 0, JSON.stringify(r.gaps));
 	expect("playground: installs as is (fix: false)", r.spec.fix === false && compile(r.spec).out.frames.length === r.spec.frames, `${compile(r.spec).out.frames.length} vs ${r.spec.frames}`);
+}
+
+// a sit whose feet the model keeps planted while the authored keys put the legs out: hold, then one foot after the other
+{
+	const n = 23, out = Array.from({ length: n }, (_, i) => ({ root: [0, 0.99 - 0.82 * i / (n - 1), 0], foot_l: [0.1, 0.105, 0.4 * i / (n - 1)], foot_r: [-0.1, 0.105, 0.4 * i / (n - 1)] }));
+	out.holds = { l: [[0, n - 1]], r: [[0, n - 1]] };
+	stepFeet(out);
+	const moving = side => out.map((o, i) => i > 0 && Math.abs(o[`foot_${side}`][2] - out[i - 1][`foot_${side}`][2]) > 1e-6);
+	const L = moving("l"), Rr = moving("r"), firstL = L.indexOf(true);
+	expect("stepFeet: the feet hold until the hips are most of the way down", firstL > 8 && out[firstL - 1].foot_l[2] === 0, `${firstL}`);
+	expect("stepFeet: never both feet moving on one frame", !L.some((m, i) => m && Rr[i]), JSON.stringify([L, Rr].map(a => a.map(Number).join(""))));
+	expect("stepFeet: both end on the authored key, lifted in between", out.at(-1).foot_r[2] === 0.4 && out.some(o => o.foot_l[1] > 0.105), JSON.stringify(out.at(-1)));
+}
+
+// motion.fill's answer: a brief that fits the receipt, with the keys the fill moved; timing is checked by the dev server's route
+{
+	const r = await fillSpecNative(demo, { sk, compile, run: stubRunner() }, { timing: "playground" }), b = fillBrief(r, demo);
+	expect("brief: the playground's last key move and guides are named", b.moved?.[0] === `f${authoredFrames(demo).at(-1)} -> f${authoredFrames(r.spec).at(-1)}` && b.guides?.[0]?.startsWith("f20 reached"), JSON.stringify(b));
+	const many = { ...r, gaps: Array.from({ length: 30 }, (_, i) => ({ f: [i, i + 20], tokens: 10, targets: 4, modelWants: { exact: 12 }, ms: 20 })), warnings: Array.from({ length: 30 }, () => "x".repeat(400)), spans: Array.from({ length: 200 }, (_, i) => [i, i + 1]) };
+	const bytes = JSON.stringify(fillBrief(many, demo)).length;
+	expect("brief: 30 gaps and 30 long warnings stay under 1.5 KB (6 lines each, spans left out)", bytes < 1500, `${bytes}`);
+	const exact = fillBrief(await fillSpecNative(demo, { sk, compile, run: stubRunner() }, { timing: "exact" }), demo);
+	expect("brief: exact moves no key", !exact.moved && exact.mode === "native", JSON.stringify(exact));
+	const args = validateStudioSchema(declarations[0].input, { characterId: "c", base: "spec-0123456789ab", timing: "exact", gate: false }, "INVALID_ARGUMENT", "args");
+	expect("action: motion.fill takes timing and gate", args.timing === "exact" && args.gate === false, JSON.stringify(args));
+	const bad = (() => { try { validateStudioSchema(declarations[0].input, { characterId: "c", base: "spec-0123456789ab", timing: "fast" }, "INVALID_ARGUMENT", "args"); return null; } catch (e) { return e.code; } })();
+	expect("action: an unknown timing is refused with INVALID_ARGUMENT", bad === "INVALID_ARGUMENT", String(bad));
+	const refused = await fillRequest({ spec: demo, timing: "fast" }).then(() => null, e => e.code);
+	expect("route: an unknown timing is INVALID_ARGUMENT", refused === "INVALID_ARGUMENT", String(refused));
+}
+
+// motion.primitive's route: the block's box from the editor row, refused unless opted in (the poses are evaluation-licensed)
+{
+	const b = blockOf({ id: "cube", x: 0, y: 0, z: 3, rot: 0, scaleX: 2, scaleY: 0.75, scaleZ: 0.4, footprint: { width: 1, depth: 1 }, height: 1 });
+	expect("primitive: a cube row is a 2 x 0.4 x 0.75 m block at z 3", b.w === 2 && Math.abs(b.d - 0.4) < 1e-9 && b.h === 0.75 && b.z === 3, JSON.stringify(b));
+	const saved = process.env.COZYCLAY_MB_PRIMITIVES; delete process.env.COZYCLAY_MB_PRIMITIVES;
+	const off = await primitiveRequest({ kind: "vault", objectId: "cube", objects: [] }).then(() => null, e => e.code);
+	if (saved !== undefined) process.env.COZYCLAY_MB_PRIMITIVES = saved;
+	expect("primitive: off unless COZYCLAY_MB_PRIMITIVES=1 (CAPABILITY_MISSING)", off === "CAPABILITY_MISSING", String(off));
 }
 
 console.log(failures ? `${failures} failed` : "all passed");
