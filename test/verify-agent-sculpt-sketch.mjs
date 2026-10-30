@@ -46,7 +46,7 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 // 1. The real 8.4 KB script, streamed with pi-ai's partial arguments: the sketch grows, then names and places the stall.
 {
 	const { sketch, frames } = await streamCall({ name: "script", args: { code: stallCall.code } });
-	assert.ok(frames.length >= 6, `the stall grows over several frames (${frames.length})`);
+	assert.ok(frames.length >= 6, `the stall grows over several frames (${frames.length}: ${frames.map(partCount).join(",")})`);
 	assert.ok(frames.every((frame) => frame.type === "sculpt.sketch" && frame.index === 0 && frame.callId === "call-1"));
 	const counts = frames.map(partCount);
 	for (let at = 1; at < counts.length; at += 1) assert.ok(counts[at] >= counts[at - 1], `parts never shrink while it streams: ${counts.join(" ")}`);
@@ -94,7 +94,7 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 	assert.deepEqual(scanCode("const S = [];\nlet t = 1;\nfor (const z of S) {}").declarations, [0, 14]);
 	assert.equal(runnablePrefix("const S = [];\nS.push({ id: 'a', size: [0.3", {}).source.trim(), "var   S = [];");
 	assert.equal(runnablePrefix("syntax error here (((\n", {}), null);
-	assert.deepEqual(declaredNames("var   S = [], D = [];\nfunction f() { const c = 1; }"), ["S", "D", "c"]);
+	assert.deepEqual(declaredNames("var   S = [], D = [];\nfunction f() { const c = 1; }"), ["S", "D", "c", "f"]);
 	assert.equal(streamedCode({ arguments: {} }, `{"code":"const a = \\"q\\\\n\\";\\nS.pu`), "const a = \"q\\n\";\nS.pu");
 	assert.equal(streamedCode({ arguments: {} }, "{\"code\":\"x\\u00"), "x");
 }

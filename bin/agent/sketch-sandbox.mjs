@@ -65,8 +65,16 @@ function sandboxPrelude(shapes, fields, maxParts) {
 		if (part.op !== undefined && part.op !== null) out.op = true;
 		return out;
 	};
-	const dump = () => {
-		const claimed = new Set(), groups = [];
+	const capture = value => {
+		if (typeof value === "function") return { __fn: String(value) };
+		if (value === undefined) return undefined;
+		try { return JSON.parse(JSON.stringify(value)); } catch { return undefined; }
+	};
+	const dump = (names) => {
+		const claimed = new Set(), groups = [], scope = {};
+		for (const name of names) {
+			try { const value = capture(eval(name)); if (value !== undefined) scope[name] = value; } catch { /* local or undeclared */ }
+		}
 		const take = (list) => {
 			const out = [];
 			for (let index = 0; index < list.length && claimed.size < maxParts; index += 1) {
@@ -80,19 +88,24 @@ function sandboxPrelude(shapes, fields, maxParts) {
 			groups.push({ key: at >= 0 ? `a${at}` : `c${index}`, name: entry.name, id: entry.id, placement: entry.placement, parts: take(entry.parts) });
 		});
 		tracked.forEach((list, index) => groups.push({ key: `a${index}`, parts: take(list) }));
-		return { groups: groups.filter((group) => group.parts.length > 0), scene: sceneCalls };
+		return { groups: groups.filter((group) => group.parts.length > 0), scene: sceneCalls, scope };
 	};
 	return { tools, see, dump };
 }
 
 /** What runs in the sandbox: the prelude, the cut inside a try, and a finally that shows the prelude every declared name and always reports. */
-function sandboxSource(source, names, shapes, keys) {
+function sandboxSource(source, names, shapes, keys, store) {
 	const fields = ["id", "shape", "size", "position", "rotation", "color", "parent", "mirror", ...keys];
-	const seen = names.map((name) => `try { __cozySketch.see(${name}); } catch {}`).join(" ");
+	const allNames = [...new Set([...Object.keys(store ?? {}), ...names])];
+	const seen = allNames.map((name) => `try { __cozySketch.see(${name}); } catch {}`).join(" ");
+	const restore = Object.entries(store ?? {}).map(([name, value]) => value && typeof value === "object" && typeof value.__fn === "string"
+		? `var ${name} = eval(${JSON.stringify(`(${value.__fn})`)});`
+		: `var ${name} = load(${JSON.stringify(name)});`).join("\n");
 	return [
 		`const __cozySketch = (${sandboxPrelude})(${JSON.stringify(shapes)}, ${JSON.stringify(fields)}, ${SKETCH_MAX_PARTS});`,
 		"tools = __cozySketch.tools;",
-		`try {\n${source}\n} finally { ${seen} return __cozySketch.dump(); }`,
+		restore,
+		`try {\n${source}\n} finally { ${seen} return __cozySketch.dump(${JSON.stringify(allNames)}); }`,
 	].join("\n");
 }
 
@@ -101,11 +114,11 @@ function sandboxSource(source, names, shapes, keys) {
  * `names` its declared names (declaredNames), `shapes`/`keys` the sculpt shapes and their shape-only keys. Null when
  * the run failed (deadline, heap, a parse error the compile check missed): the caller keeps its last sketch.
  */
-export async function dryRunSketch(source, names, { shapes, keys, timeoutMs = TIMEOUT_MS } = {}) {
+export async function dryRunSketch(source, names, { shapes, keys, timeoutMs = TIMEOUT_MS, store } = {}) {
 	const { CodemodeSandbox } = await import("@earendil-works/pi-codemode");
 	const sandbox = new CodemodeSandbox({ timeoutMs, memoryLimitBytes: MEMORY_LIMIT_BYTES, tools: [] });
 	try {
-		const result = await sandbox.execute(sandboxSource(source, names, shapes, keys));
+		const result = await sandbox.execute(sandboxSource(source, names, shapes, keys, store), { store });
 		return result.ok && Array.isArray(result.value?.groups) ? result.value : null;
 	} catch {
 		return null;

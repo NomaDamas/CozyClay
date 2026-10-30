@@ -4,7 +4,7 @@
 // stub tools in a throwaway sandbox (sketch-sandbox.mjs); direct creation calls are read from pi-ai's partially
 // parsed arguments. A model writing an 8 KB script spends minutes on it; without this the stage stays empty until
 // it runs. Frames only: nothing here reaches the model or the scene, and a failed sketch is no sketch.
-import { declaredNames, runnablePrefix, streamedCode } from "./sketch-code.mjs";
+import { declaredNames, runnablePrefix, scanCode, statementDelta, streamedCode } from "./sketch-code.mjs";
 import { dryRunSketch, SKETCH_MAX_PARTS } from "./sketch-sandbox.mjs";
 
 /** How often a streaming call is sketched again, at most. */
@@ -17,9 +17,7 @@ const COLOR = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
 // Catalogue primitives are translated into the sculpt ghost's small shape vocabulary. Unknown kinds
 // (text, lights, effects and imported assets) stay out of the preview instead of becoming fake geometry.
 const PRIMITIVES = {
-	cube: { shape: "box", size: [1, 1, 1] }, sphere: { shape: "blob", size: [1, 1, 1] },
-	capsule: { shape: "blob", size: [0.7, 1.4, 0.7] }, cylinder: { shape: "cylinder", size: [1, 1, 1] },
-	cone: { shape: "cylinder", size: [1, 1, 1], taper: 1 }, plane: { shape: "box", size: [2, 0.02, 2] },
+	cube: { shape: "box", size: [1, 1, 1] }, sphere: { shape: "blob", size: [1, 1, 1] }, capsule: { shape: "blob", size: [0.7, 1.4, 0.7] }, cylinder: { shape: "cylinder", size: [1, 1, 1] }, cone: { shape: "cylinder", size: [1, 1, 1], taper: 1 }, plane: { shape: "box", size: [2, 0.02, 2] },
 };
 
 let running = 0;
@@ -188,12 +186,15 @@ async function scriptGroups(state, env) {
 	const code = streamedCode(state.call, state.raw);
 	// The code only grows while it streams; anything else starts the cut over.
 	if (state.cut && !code.startsWith(state.cutText)) state.cut = null;
-	const cut = runnablePrefix(code, { after: state.cut?.end ?? 0, whole: state.complete }) ?? state.cut;
-	if (!cut || cut.source === state.ran) return undefined;
+	const cut = runnablePrefix(code, { after: state.cut?.end ?? 0, whole: state.complete }) ?? state.cut; if (!cut || cut.source === state.ran) return undefined;
 	Object.assign(state, { cut, cutText: code.slice(0, cut.end), ran: cut.source });
-	const value = await dryRunSketch(cut.source, declaredNames(cut.source), env);
-	state.scene = value?.scene;
-	return value ? sculptSketchGroups(value, env) : undefined;
+	// Restore the previous run's variables and helper functions, then execute only
+	// the new statements. The full prefix runs again only when no scope can be restored.
+	const incremental = !state.complete && state.scope && cut.start > 0 && !scanCode(code.slice(0, cut.start))?.close, delta = incremental ? statementDelta(code, cut) : cut.source;
+	const value = await dryRunSketch(delta, declaredNames(delta), { ...env, store: state.scope }); if (!value) return undefined;
+	state.scope = incremental ? { ...state.scope, ...value.scope } : value.scope, state.scene = incremental ? [...(state.scene ?? []), ...(value.scene ?? [])] : value.scene;
+	const sculpt = new Map((incremental ? state.sculpt ?? [] : value.groups).map(group => [group.key, group])); if (incremental) for (const group of value.groups ?? []) sculpt.set(group.key, group);
+	state.sculpt = [...sculpt.values()]; return sculptSketchGroups({ groups: state.sculpt, scene: state.scene }, env);
 }
 
 /** The groups a direct creation call shows so far; while it streams, its last part may be half written. */
