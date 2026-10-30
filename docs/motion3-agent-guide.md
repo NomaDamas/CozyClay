@@ -19,6 +19,12 @@ Author 2-4 whole-body key poses. Each pose keys root, `yaw/pitch/roll`, `spine_*
 
 In the Studio, Pose mode has the same workflow on the Sequencer's key bar: **Key** (K) keys the whole pose and the character's spot at the playhead, Shift+K removes it, **Frames** sets the timeline length, and **Fill transition (free spans)** runs `motion.fill` over the keyed frames.
 
+### Native mode (opt-in, dev server)
+
+`COZYCLAY_MB_MODE=native` on the dev server (`tools/dev-full.mjs`) switches `motion.fill` and `fill: true` to `src/motion3/bricks/fill-native.js`, which drives the model the way the upstream runtime does: 4 target poses (with velocity) at a key the motion passes through and 1 (a stop) at the last key, engine-style endpoint correction, and dense output keys. `COZYCLAY_MB_TIMING` picks the timing: `exact` (default, authored frames kept, the model's own length comes back as a `timing` warning), `free`, `retime` (each gap takes the model's length and later keys move) or `playground` (one chain, middle keys are guides that come back in `output.fill.guides`, the result installs without repair or thinning). `COZYCLAY_MB_GATE=0` also generates the gaps the default fill leaves to the compiler. Without these variables nothing changes.
+
+Smart Primitives on a scene object: `node tools/motionbricks/vault.mjs --block x,z,width,depth,height --objects objects.json [--doc jump_0_75m] [--seq OneHandedJump0]` writes a spec that installs as is (`motion.compile` with `repair: false, thin: false`). It places the official SOMA Smart Primitive targets on the block, runs the chain like the upstream runtime (target-pose IK pins included), and corrects block overlaps (QA COLLIDE) and joint pops (QA POP/FLIP) inside the chain so the next step continues from the corrected frames. `node tools/motionbricks/poses.mjs [out.json]` exports the 22 target poses as pose-library entries. Both fetch NVIDIA's sample clips at a pinned commit into `~/.cache/cozyclay/motionbricks/`: they are under the NVIDIA Sample Data Evaluation License (evaluation and testing only) and must not be committed or shipped.
+
 ### Model setup (dev server only)
 
 - The fill runs on `onnxruntime-node`, which is not a dependency of the app or the MCP package. Install it once next to the server: `(cd mcp && npm install --no-save onnxruntime-node@1.23)`.

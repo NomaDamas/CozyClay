@@ -67,9 +67,10 @@ export function register(registry, ports) {
 		const character = characterOf(ports, characterId);
 		const source = fillSource({ spec, base }, b => registry.motionSpecOf?.(b), ports.storeDomain("motion")?.motionFor(characterId)?.spec);
 		const filled = await requestFill(ports.fetch ?? globalThis.fetch, { spec: source, model: character.model, objects: ports.state?.().objects ?? [], ...(at === undefined ? {} : { at }) });
-		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install }, context);
+		// the playground-style fill is kept as generated: no repair or thinning on its compile
+		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install, ...(filled.mode === "native-playground" ? { repair: false, thin: false } : {}) }, context);
 		const keys = filled.spec.keys.filter(k => isFillKey(k)).length;
 		return { ...r, summary: `MotionBricks filled ${filled.gaps.length} gap${filled.gaps.length === 1 ? "" : "s"} (${keys} fill keys, ${filled.calls} model calls). ${r.summary}`,
-			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, spans: filled.spans, ...(filled.dropped ? { dropped: filled.dropped } : {}), ...(filled.notes ? { notes: filled.notes } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
+			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, ...(filled.guides ? { guides: filled.guides } : {}), spans: filled.spans, ...(filled.dropped ? { dropped: filled.dropped } : {}), ...(filled.notes ? { notes: filled.notes } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
 	} });
 }
