@@ -5,11 +5,12 @@ import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { fillSpec } from "../../src/motion3/bricks/fill.js";
+import { fillSpecNative } from "../../src/motion3/bricks/fill-native.js";
 import { createRunner } from "./model.mjs";
 
 let runner;
 
-export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = false, objects = [] } = {}) {
+export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = false, objects = [], mode = process.env.COZYCLAY_MB_MODE } = {}) {
 	if (!spec || typeof spec !== "object" || !Array.isArray(spec.keys)) throw Object.assign(new Error("spec must be a motion spec with keys"), { code: "INVALID_ARGUMENT" });
 	if (at !== undefined && !Number.isInteger(at)) throw Object.assign(new Error("at must be a whole frame"), { code: "INVALID_ARGUMENT" });
 	const sk = skeletonFor(model);
@@ -18,6 +19,10 @@ export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = fals
 	const run = await (runner ??= createRunner().catch(error => { runner = undefined; throw error; }));
 	// the editor's scene objects (motion3-fill.js sends them): an anchor or a check naming a wall, a table or a door handle compiles here too
 	const scene = motionScene(Array.isArray(objects) ? objects : []);
+	if (mode === "native") {
+		const filled = await fillSpecNative(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, timing: ["free", "retime", "playground"].includes(process.env.COZYCLAY_MB_TIMING) ? process.env.COZYCLAY_MB_TIMING : "exact", gate: process.env.COZYCLAY_MB_GATE !== "0" });
+		return { ...filled, ms: Math.round(performance.now() - t0) };
+	}
 	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, auto: auto === true, targets: Number(process.env.COZYCLAY_MB_TARGETS) === 4 ? 4 : 1, footLock: process.env.COZYCLAY_MB_FOOTLOCK === "speed" ? "speed" : "channel" });
 	return { ...filled, ms: Math.round(performance.now() - t0) };
 }
