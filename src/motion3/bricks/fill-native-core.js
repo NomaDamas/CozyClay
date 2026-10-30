@@ -3,7 +3,8 @@
 import { somaFK, toCozyPoint, SOMA_PARENT } from "./soma.js";
 import { MIN_TOKENS, MAX_TOKENS } from "./model-io.js";
 import { frameChannels, unwrapSeries } from "./forward.js";
-import { STEP, lockFeet } from "./fill.js";
+import { STEP, lockFeet, sparseKeys, merge } from "./fill.js";
+import { solePoints } from "../qa/geometry.js";
 import { rangeOf } from "../compiler/vocab.js";
 import { quatFromMat, matFromQuat, mul, T, add, scale, sub } from "../compiler/math.js";
 
@@ -126,6 +127,32 @@ export function stepFeet(out) {
 		out.holds[k] = [[0, s0], [s1, last]];
 	});
 	return out;
+}
+
+const GROUND_PASSES = 2, GROUND_CLEAR = 0.003;
+/**
+ * The model's skeleton is not the rig's, and a held ankle under a pitched foot pushes the toe down: either can put a sole
+ * under the floor (QA GROUND across a kneel or a crouch). Compile the gap with its dense keys, read each frame's lowest
+ * sole point (the QA's own heel, ball and tip) and raise that ankle by the depth; twice, since a raised ankle turns the
+ * foot. Only frames under the floor change. Mutates dense; answers how many frame-sides it raised.
+ */
+export function groundSoles(dense, fa, { spec, keys, compile, sk }) {
+	let raised = 0;
+	for (let pass = 0; pass < GROUND_PASSES; pass++) {
+		const frames = compile({ ...spec, keys: merge(keys, sparseKeys(dense, fa, "ground", TOL_SCALE)) }).out.frames;
+		let moved = 0;
+		dense.forEach((ch, i) => {
+			const s = frames[fa + i]?.s;
+			if (!s || i === 0 || i === dense.length - 1) return;
+			for (const [k, side] of [["l", "Left"], ["r", "Right"]]) {
+				const sp = solePoints(sk, s, side), low = Math.min(sp.heel[1], sp.ball[1], sp.tip[1]), foot = ch[`foot_${k}`];
+				if (low < 0 && foot) { ch[`foot_${k}`] = [foot[0], foot[1] - low + GROUND_CLEAR, foot[2]]; moved++; }
+			}
+		});
+		raised += moved;
+		if (!moved) break;
+	}
+	return raised;
 }
 
 /** The gap's own token count (its length at 30 fps) and a wider range for asking the model how long it would take. */
