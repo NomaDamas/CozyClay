@@ -15,7 +15,7 @@ export const MOTION_ACTION_HELP = {
 	fill: "MotionBricks generates the transition between two poses for each gap between authored key poses (at most 46 frames); author 2-4 poses (armw on), then call this instead of plain interpolation. "
 		+ "Send spec (keys may name a pose: { f, pose: \"sit_floor\" }) or base + patch; gaps become keys marked src: \"fill\", then it compiles, runs QA and installs like motion.compile (plus output.fill). "
 		+ "at: re-fills only the gaps beside that frame. timing: exact (keeps the key frames), retime or playground (the model sets the pace; output.fill.moved), free. Needs the dev server; topic fill.",
-	primitive: "A run-up and a vault (one hand on the block) or a jump over a scene block, played from a MotionBricks Smart Primitive: the take crosses the block along +Z at x lane (default the block's centre), "
+	primitive: "A run-up and a vault (one hand on the block) or a jump over a scene block, played from a MotionBricks Smart Primitive: the take crosses the block along +Z at x lane (default the block's centre), hand: left (default) or right plants, "
 		+ "keeps its own hand and foot contacts and clears the block, then compiles and installs as is (no repair). The block stands on the floor, 0.3-1 m tall, unturned. Opt-in on the dev server (COZYCLAY_MB_PRIMITIVES=1).",
 	qa: "Measure the character's installed take again against the scene as it is now (objects may have moved). Optional checks replace the spec's checks and its skills' checks. "
 		+ "Answers specId and qa as motion.compile does (goals, ranked groups with cause, hint and patch); output.more pages with motion.report. Changes nothing.",

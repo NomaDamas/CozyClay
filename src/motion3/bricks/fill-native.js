@@ -12,7 +12,7 @@ import { isFillKey, shortHash, editedFill } from "./fill-src.js";
 import { spanReason } from "./fill-spans.js";
 import { classifySpans, densityNotes } from "./fill-density.js";
 import { STEP, poseAt, fillGaps, pinHands, sparseKeys, merge, passThrough, safeGap, gapQa, gapCheck } from "./fill.js";
-import { MIN_GAP, TOL_SCALE, correctMotion, denseChannels, gapTokens, groundSoles } from "./fill-native-core.js";
+import { MIN_GAP, TOL_SCALE, correctMotion, denseChannels, gapTokens, groundSoles, relaxPops } from "./fill-native-core.js";
 import { fillRetime, fillPlayground } from "./fill-native-chain.js";
 
 /** Same contract as fill.js fillSpec ({ spec, gaps, calls, spans, ... }), the native policy. */
@@ -54,12 +54,13 @@ export async function fillSpecNative(spec, { sk, compile, run }, { at, timing = 
 		const motion = correctMotion(decodeMotion(res.out, res.tokens, align), poses[3], poses[4]);
 		const dense = pinHands(denseChannels(motion, fa, fb, r.out.baked, base.out.baked), fa, fb, authored, r.out.frames, sk);
 		const grounded = groundSoles(dense, fa, { spec: { ...spec, fix: { ...(spec.fix ?? {}), slide: false } }, keys, compile, sk });
+		const relaxed = relaxPops(dense, fa, { spec, keys, compile, sk });
 		const fill = sparseKeys(dense, fa, ends[i], TOL_SCALE);
 		const qaCurve = gapQa(r.qa, fa, fb);
 		keys = merge(keys, fill);
 		const qaModel = gapQa(compile({ ...spec, keys }).qa, fa, fb);
 		const warp = +(((fb - fa) / STEP + 1) / (res.tokens * 4 - 6)).toFixed(2);
-		report.push({ f: [fa, fb], tokens: res.tokens, targets: nTarget, modelWants: wants, ...(warp === 1 ? {} : { warp }), keys: fill.length, ...(grounded ? { grounded } : {}), qa: [qaCurve.groups, qaModel.groups], ms: Math.round(ms) });
+		report.push({ f: [fa, fb], tokens: res.tokens, targets: nTarget, modelWants: wants, ...(warp === 1 ? {} : { warp }), keys: fill.length, ...(grounded ? { grounded } : {}), ...(relaxed ? { relaxed } : {}), qa: [qaCurve.groups, qaModel.groups], ms: Math.round(ms) });
 	}
 	const baked = compile({ ...spec, keys }).out.baked, frames = baked.root?.length ?? (Number.isFinite(spec.frames) ? spec.frames : 0);
 	const { kind, spans } = classifySpans({ ...spec, keys }, baked, frames), notes = densityNotes(keys, kind, spans, baked);

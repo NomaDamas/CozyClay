@@ -2,7 +2,7 @@
 // tools/motionbricks/vault.mjs plays an upstream Smart Primitive (Entry -> Action -> Exit target windows) over the block and
 // answers the dense spec it installs as is. Opt-in (COZYCLAY_MB_PRIMITIVES=1): the target poses come from the upstream
 // sample clips, which are under the NVIDIA Sample Data Evaluation License, downloaded to the user's cache, never shipped.
-// { kind: "vault" | "jump", objectId, objects, lane? } -> { spec, report } or { error }.
+// { kind: "vault" | "jump", objectId, objects, lane?, hand?: "left" | "right" (the clips plant the left: right mirrors the run) } -> { spec, report } or { error }.
 import { execFile } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -22,14 +22,14 @@ export function blockOf(o) {
 	return { x: o.x ?? 0, z: o.z ?? 0, w, d, h, y: o.y ?? 0 };
 }
 
-export async function primitiveRequest({ kind = "vault", objectId, objects = [], lane } = {}) {
+export async function primitiveRequest({ kind = "vault", objectId, objects = [], lane, hand = "left" } = {}) {
 	if (process.env.COZYCLAY_MB_PRIMITIVES !== "1") fail("CAPABILITY_MISSING", "Smart Primitives are opt-in on this server (COZYCLAY_MB_PRIMITIVES=1): their target poses come from evaluation-licensed sample clips");
 	if (!KINDS[kind]) fail("INVALID_ARGUMENT", `kind must be one of ${Object.keys(KINDS).join(", ")}`);
 	const b = blockOf(objects.find(o => o.id === objectId));
 	if (b.y > 0.01 || b.h < 0.3 || b.h > 1) fail("INVALID_ARGUMENT", `the block must stand on the floor and be 0.3-1 m tall (it is ${b.h.toFixed(2)} m, base at ${b.y.toFixed(2)} m)`);
 	const dir = mkdtempSync(join(tmpdir(), "mb-prim-")), out = join(dir, "spec.json"), objs = join(dir, "objects.json");
 	writeFileSync(objs, JSON.stringify(objects));
-	const args = [RUNNER, "--block", [b.x, b.z, b.w, b.d, b.h].join(","), "--doc", b.h <= 0.6 ? "jump_0_5m" : "jump_0_75m", "--seq", KINDS[kind], "--lane", String(lane ?? b.x), "--objects", objs, "--out", out];
+	const args = [RUNNER, "--block", [b.x, b.z, b.w, b.d, b.h].join(","), "--doc", b.h <= 0.6 ? "jump_0_5m" : "jump_0_75m", "--seq", KINDS[kind], "--lane", String(lane ?? b.x), "--hand", hand === "right" ? "right" : "left", "--object", objectId, "--objects", objs, "--out", out];
 	try {
 		// onnxruntime-node can abort at process exit (a mutex torn down twice) after the runner wrote its answer: the answer counts
 		const stdout = await new Promise((ok, no) => execFile(process.execPath, args, { timeout: 60000, maxBuffer: 4 << 20 }, (error, so, se) => (error && !(existsSync(out) && so.includes("{")) ? no(Object.assign(error, { stderr: se })) : ok(so))));

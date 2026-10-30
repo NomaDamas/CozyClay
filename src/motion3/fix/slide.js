@@ -13,7 +13,7 @@ import { groundSole } from "../qa/ground.js";
 import { round4 } from "./ease.js";
 
 // a pivot the keys carry farther than PIVOT_MAX is not a turn on the spot but the foot going somewhere (a kneel, a step back): let it go
-const MAX_DRIFT = 0.01, DECAY = 4, PIVOT_H = 0.03, EASE_STEP = 0.02, PIVOT_MAX = 0.3;
+const MAX_DRIFT = 0.01, DECAY = 4, PIVOT_H = 0.03, EASE_STEP = 0.02, PIVOT_MAX = 0.15;
 
 export function lockFeet(out, engine) {
 	const n = out.frames.length, H = QA_LIMITS.plantH;

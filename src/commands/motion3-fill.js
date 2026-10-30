@@ -20,7 +20,7 @@ export const declarations = Object.freeze([
 			patch: { type: "array", items: openObject, maxItems: 64 }, at: { type: "integer", minimum: 0 }, timing: { type: "string", enum: ["exact", "free", "retime", "playground"] }, gate: { type: "boolean" }, install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } },
 		required: ["characterId"], additionalProperties: false } },
 	{ id: "motion.primitive", label: "Vault or jump over a block (MotionBricks Smart Primitive)", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.primitive,
-		input: { type: "object", properties: { characterId: id, objectId: id, kind: { type: "string", enum: ["vault", "jump"] }, lane: { type: "number" },
+		input: { type: "object", properties: { characterId: id, objectId: id, kind: { type: "string", enum: ["vault", "jump"] }, hand: { type: "string", enum: ["left", "right"] }, lane: { type: "number" },
 			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } }, required: ["characterId", "objectId", "kind"], additionalProperties: false } },
 ]);
 
@@ -104,9 +104,9 @@ export function register(registry, ports) {
 		return { ...r, summary: `${r.summary}${fill.mode ? ` Fill ${fill.mode}, ${fill.keys} keys.` : ""}${fill.moved ? ` The fill moved authored keys ${fill.moved.join(", ")}.` : ""}` };
 	} });
 	// a Smart Primitive's take is the runner's dense spec (it holds its own contacts and block clearance): compiled as is, no repair or thinning
-	registry.register({ ...declarations[1], available: mounted, target: args => args.characterId, async run({ characterId, objectId, kind, lane, install = true }, context) {
+	registry.register({ ...declarations[1], available: mounted, target: args => args.characterId, async run({ characterId, objectId, kind, hand, lane, install = true }, context) {
 		characterOf(ports, characterId);
-		const made = await requestFill(ports.fetch ?? globalThis.fetch, { kind, objectId, lane, objects: ports.state?.().objects ?? [] }, "/agent/motion-primitive");
+		const made = await requestFill(ports.fetch ?? globalThis.fetch, { kind, objectId, lane, hand, objects: ports.state?.().objects ?? [] }, "/agent/motion-primitive");
 		const r = await registry.get("motion.compile").run({ characterId, spec: { ...made.spec, fix: false }, install, repair: false, thin: false, filled: { mode: `primitive-${kind}`, calls: 0, keys: made.spec.keys.length, gaps: [], ...made.report } }, context);
 		return { ...r, summary: `${r.summary} Smart Primitive ${made.report.seq}: over the block at f${made.report.actionAtFrame ?? "?"}, ${made.report.frames} frames.` };
 	} });

@@ -30,4 +30,12 @@ const spec = expandPoses({ keys: [{ f: 0, pose: "stand" }, { f: 20, pose: "sit_f
 assert.ok(spec.keys.every(k => !("pose" in k)) && spec.keys[1].set.spine_pitch === 12 && spec.keys[1].set.root[1] === 0.16);
 assert.throws(() => expandPoses({ keys: [{ f: 0, pose: "handstand" }] }, sk), /not a pose.*stand, ready/);
 console.log("PASS a named key expands (set overrides it); an unknown name lists the poses");
+// QA sees what it could not: a key the take never reaches (KEY) and hips that jump in one frame (TELEPORT)
+{
+	const r = compileSpec({ schema: "cozyclay.motion-spec.v1", frames: 20, keys: [{ f: 0, pose: "stand" }, { f: 10, set: { root: [0, 0.99, 0] } }, { f: 11, set: { root: [1.5, 0.99, 0] } }, { f: 19, pose: "stand", at: [1.5, 0] }] }, { sk, scene });
+	assert.ok(r.qa.groups.some(g => g.kind === "TELEPORT" && g.first === 11), JSON.stringify(r.qa.groups.map(g => [g.kind, g.first])));
+	const walk = compileSpec({ schema: "cozyclay.motion-spec.v1", frames: 20, keys: [{ f: 0, pose: "stand" }, { f: 19, pose: "stand", at: [0, 0.4] }] }, { sk, scene });
+	assert.ok(!walk.qa.groups.some(g => g.kind === "TELEPORT"), "a 0.4 m drift over 19 frames is no jump");
+	console.log("PASS QA: TELEPORT names a one-frame hips jump, not a slow move");
+}
 console.log("verify-motion3-poses: all checks passed");

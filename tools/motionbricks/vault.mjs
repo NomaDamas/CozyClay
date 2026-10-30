@@ -10,7 +10,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { motionScene } from "../../src/motion3/scene.js";
-import { somaFK, toCozyPoint, toSomaPoint, SID } from "../../src/motion3/bricks/soma.js";
+import { somaFK, toCozyPoint, toSomaPoint, SID, SOMA_JOINTS } from "../../src/motion3/bricks/soma.js";
+import { solePoints } from "../../src/motion3/qa/geometry.js";
 import { somaPose } from "../../src/motion3/bricks/reverse.js";
 import { encodePoses, decodeMotion } from "../../src/motion3/bricks/model-io.js";
 import { frameChannels, unwrapSeries, roundChannels } from "../../src/motion3/bricks/forward.js";
@@ -44,7 +45,14 @@ const cross = toSomaPoint([lane, 0, bz]), crossAhead = toSomaPoint([lane, 0, bz 
 const dirScene = [crossAhead[0] - cross[0], crossAhead[2] - cross[2]];
 const theta = (Math.atan2(dirScene[0], dirScene[1]) - Math.atan2(dirClip[0], dirClip[1])) * 180 / Math.PI, Ry = ry(theta);
 const aR = apply(Ry, [a[0], 0, a[1]]), shift = [cross[0] - aR[0], 0, cross[2] - aR[2]];
-const place = p => { const root = apply(Ry, p.root); root[0] += shift[0]; root[2] += shift[2]; return withFK({ root, R: p.R.map(r => mul(Ry, r)) }); };
+const placed = p => { const root = apply(Ry, p.root); root[0] += shift[0]; root[2] += shift[2]; return withFK({ root, R: p.R.map(r => mul(Ry, r)) }); };
+// --hand right: the clips plant the left hand, so the run is mirrored about the crossing line (left and right joints swapped; a
+// joint's frame mirrors in z on the centre line and wholly on a side chain, as the SOMA rig's offsets do: 1.2 cm off at the fingers)
+const mirror = arg("hand", "left") === "right", nM = (l => [dirScene[1] / l, 0, -dirScene[0] / l])(Math.hypot(...dirScene));
+const MM = [0, 1, 2].map(i => [0, 1, 2].map(j => (i === j ? 1 : 0) - 2 * nM[i] * nM[j])), LC = [[1, 0, 0], [0, 1, 0], [0, 0, -1]], LS = [[-1, 0, 0], [0, -1, 0], [0, 0, -1]];
+const SWAP = SOMA_JOINTS.map(nm => SID[nm.replace(/^(Left|Right)/, m => (m === "Left" ? "Right" : "Left"))]);
+const mirrored = p => { const d = p.root.map((v, i) => v - cross[i]), root = apply(MM, d).map((v, i) => v + cross[i]); return withFK({ root, R: SOMA_JOINTS.map((nm, j) => mul(mul(MM, p.R[SWAP[j]]), /^(Left|Right)/.test(nm) ? LS : LC)) }); };
+const place = p => (mirror ? mirrored(placed(p)) : placed(p));
 
 // the Y Bot standing (first key of the demo spec), as a SOMA pose turned to face the crossing and moved to a ground spot
 const stand0 = somaPose(sk, compile({ ...standSpec, keys: standSpec.keys.slice(0, 1), frames: 2 }).out.frames[0].s);
@@ -59,7 +67,8 @@ let ctx = Array(4).fill(standAt([firstClip.root[0], firstClip.root[2]], dirScene
 // the chain: the sequence's targets, then a standing stop 1.2 m past the Exit
 const exitPlaced = place(withFK(bvhPose(bvh, timeOf(steps.at(-1).c))));
 const len = Math.hypot(...dirScene), dn = [dirScene[0] / len, dirScene[1] / len];
-const plan = steps.map(s => ({ label: s.name, pins: s.c.ik_pin_mask ?? 0, targets: windowAt(timeOf(s.c)).map(place).slice(0, s.c.num_poses_to_use), early: s.c.transition_early_by_frames ?? 0,
+const swapPins = m => (mirror ? ((m & 1) << 1) | ((m & 2) >> 1) | ((m & 4) << 1) | ((m & 8) >> 1) : m);
+const plan = steps.map(s => ({ label: s.name, pins: swapPins(s.c.ik_pin_mask ?? 0), targets: windowAt(timeOf(s.c)).map(place).slice(0, s.c.num_poses_to_use), early: s.c.transition_early_by_frames ?? 0,
 	tokens: Array.from({ length: (s.c.max_tokens ?? 14) - (s.c.min_tokens ?? 6) + 1 }, (_, i) => (s.c.min_tokens ?? 6) + i) }));
 plan.push({ label: "Stand", targets: [standAt([exitPlaced.root[0] + dn[0] * 1.2, exitPlaced.root[2] + dn[1] * 1.2], dirScene)], early: 0, tokens: Array.from({ length: 9 }, (_, i) => 6 + i) });
 
@@ -83,7 +92,10 @@ const build = () => {
 	const F = shown.length - 1;
 	shown.forEach(saneChannels);
 	const first = { f: 0, set: { ...roundChannels(shown[0]), armw_l: 1, armw_r: 1 } }, last = { f: F, set: roundChannels(shown[F]) };
-	return { schema: "cozyclay.motion-spec.v1", label: `MotionBricks ${docName} ${seq.name} over the block`, frames: F + 1, flow: false, fix: false, keys: [first, ...(F > 1 ? sparseKeys(shown, 0, "vault", 0.15) : []), ...(F > 0 ? [last] : [])] };
+	// the planting hand rests the body on the block (QA's supports: its frames are not flight)
+	const hand = plan.some(st => st.pins & 2) ? "hand_r" : plan.some(st => st.pins & 1) ? "hand_l" : null, blockId = arg("object");
+	return { schema: "cozyclay.motion-spec.v1", label: `MotionBricks ${docName} ${seq.name} over the block`, frames: F + 1, flow: false, fix: false,
+		...(hand && blockId ? { checks: { supports: [{ object: blockId, part: hand, tol: 0.05 }] } } : {}), keys: [first, ...(F > 1 ? sparseKeys(shown, 0, "vault", 0.15) : []), ...(F > 0 ? [last] : [])] };
 };
 /** Moves the parts QA calls COLLIDE in frames >= from clear of the block, on the compiled body; up to `rounds` compiles. */
 function clearBlock(from, rounds = 6) {
@@ -190,6 +202,11 @@ for (let round = 0; round < 5; round++) {
 	}
 	popLog.push(pops.map(g => g.subject.split(" in one")[0]));
 	if (clean) clearBlock(1, 3);
+}
+// soles under the floor are raised by their depth on the compiled body (the clip's skeleton is not the rig's)
+for (let pass = 0; pass < 2; pass++) {
+	const fr = compile(build()).out.frames;
+	shown.forEach((ch, f) => { for (const [k, S] of [["l", "Left"], ["r", "Right"]]) { const sp = solePoints(sk, fr[f].s, S), low = Math.min(sp.heel[1], sp.ball[1], sp.tip[1]); if (low < 0) ch[`foot_${k}`] = [ch[`foot_${k}`][0], ch[`foot_${k}`][1] - low + 0.003, ch[`foot_${k}`][2]]; } });
 }
 const spec = build(), F = spec.frames - 1;
 const finalQa = objects.length ? (compile(spec).qa?.groups ?? []).filter(g => g.kind === "COLLIDE").map(g => `${g.subject} f${g.first}-${g.last}`) : null;

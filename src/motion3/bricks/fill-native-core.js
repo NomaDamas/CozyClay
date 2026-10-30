@@ -155,6 +155,42 @@ export function groundSoles(dense, fa, { spec, keys, compile, sk }) {
 	return raised;
 }
 
+const POP_LIMIT = 0.06, POP_ROUNDS = 3;
+const SIDE = { Leg: ["foot", "knee"], Foot: ["foot", "knee", "fpitch", "fyaw"], ToeBase: ["foot", "fpitch"], Arm: ["hand", "elbow"], ForeArm: ["hand", "elbow"], Hand: ["hand", "elbow"] };
+const drives = bone => { const m = /^(Left|Right)(.+)$/.exec(bone); return m ? (SIDE[m[2]] ?? []).map(c => `${c}_${m[1] === "Left" ? "l" : "r"}`) : /^Head|^Neck/.test(bone) ? ["head_pitch", "head_yaw", "spine_pitch"] : ["root"]; };
+/**
+ * A one-frame kick QA calls POP inside the gap (the exact fill squeezing the model's longer move into the authored frames, or the
+ * end correction): on the compiled gap find the frames where that bone's acceleration passes POP_LIMIT and average the channels
+ * that drive it with their neighbours over +-2 frames (the vault runner's pass, tools/motionbricks/vault.mjs); the gap's ends stay.
+ * Mutates dense; answers how many frames it relaxed.
+ */
+export function relaxPops(dense, fa, { spec, keys, compile, sk }) {
+	let relaxed = 0;
+	const last = dense.length - 1;
+	for (let round = 0; round < POP_ROUNDS; round++) {
+		const r = compile({ ...spec, keys: merge(keys, sparseKeys(dense, fa, "pop", TOL_SCALE)) });
+		const pops = (r.qa?.groups ?? []).filter(g => g.kind === "POP" && g.last >= fa && g.first <= fa + last);
+		if (!pops.length) break;
+		const marks = new Map();
+		for (const g of pops) {
+			const bone = g.subject.split(" ")[0], j = sk.index[bone];
+			if (j === undefined) continue;
+			for (let i = 1; i < last; i++) {
+				const [a, b, c] = [i - 1, i, i + 1].map(k => r.out.frames[fa + k]?.s.P[j]);
+				if (!a || !c || Math.hypot(...a.map((v, x) => v - 2 * b[x] + c[x])) <= POP_LIMIT) continue;
+				for (const ch of drives(bone)) { const set = marks.get(ch) ?? new Set(); for (let k = -2; k <= 2; k++) if (i + k > 0 && i + k < last) set.add(i + k); marks.set(ch, set); }
+			}
+		}
+		if (!marks.size) break;
+		for (const [ch, set] of marks) {
+			if (dense[0][ch] === undefined) continue;
+			for (let it = 0; it < 3; it++) { const prev = dense.map(d => d[ch]); for (const i of set) dense[i][ch] = lerp(prev[i], lerp(prev[i - 1], prev[i + 1], 0.5), 0.6); }
+			relaxed += set.size;
+		}
+	}
+	return relaxed;
+}
+
 /** The gap's own token count (its length at 30 fps) and a wider range for asking the model how long it would take. */
 export function gapTokens(fa, fb) {
 	const frames = (fb - fa) / STEP + 1, t = Math.max(MIN_TOKENS, Math.round((frames + 6) / 4));
