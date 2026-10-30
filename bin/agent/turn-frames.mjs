@@ -31,11 +31,11 @@ function composedCall(name, raw) {
  * { type: "thinking.delta", text } at most every FLUSH_MS, and { type: "tool.compose", index, name, action?, subject? }
  * whenever what the call being written names changes.
  */
-export function createReasoningFrames(push, clock = () => Date.now()) {
+export function createReasoningFrames(push, clock = () => Date.now(), { onScene } = {}) {
 	let thinking = "", flushedAt = clock();
 	const calls = new Map();
-	// The parts a call that builds sculpts has written so far, as sculpt.sketch frames (sculpt-sketch.mjs).
-	const sketch = createSculptSketch(push, clock);
+	// The sculpt, primitive and character creations written so far, as sculpt.sketch frames (sculpt-sketch.mjs).
+	const sketch = createSculptSketch(push, clock, { onScene });
 	const flush = () => {
 		if (!thinking) return;
 		push({ type: "thinking.delta", text: thinking });
@@ -44,6 +44,7 @@ export function createReasoningFrames(push, clock = () => Date.now()) {
 	};
 	return {
 		flush,
+		settled: () => sketch.settled(),
 		onMessageEvent(event) {
 			sketch.onMessageEvent(event);
 			if (event?.type === "thinking_delta") {

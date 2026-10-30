@@ -1,5 +1,5 @@
-// The live sketch in the working views: while the agent is still writing a call that builds sculpts, the parts it
-// has written so far (sculpt-sketch-state.js) stand on the stage as translucent clay in their own colours, so the
+// The live sketch in the working views: while the agent is still writing a call that builds sculpts, catalogue
+// primitives or characters, the parts it has written so far stand on the stage as translucent clay in their own colours, so the
 // scene takes shape while the model types instead of after minutes of an empty stage. Each part grows in briefly,
 // so new ones read as new. Everything sits on GIZMO_LAYER and takes no ray: the shot preview card, PlayView,
 // captures the agent reads (verify_result), contact sheets and exports never draw it, and no pick can select it.
@@ -15,6 +15,9 @@ const OPACITY = 0.42;
 /** A scatter is drawn as the soft box it fills: its items are the real sculpt's job. */
 const SCATTER_OPACITY = 0.2;
 const GROW_MS = 420;
+// A loop becomes runnable only after its closing brace, so one dry run can return
+// dozens of parts together. Stagger their reveal instead of flashing the whole set.
+const REVEAL_STEP_MAX_MS = 90, REVEAL_TOTAL_MS = 1200;
 const DEG = Math.PI / 180;
 // After the other see-through things (ghost-set.js draws onion skins at 40).
 const RENDER_ORDER = 44;
@@ -68,6 +71,8 @@ class SketchLayer {
 	/** Keep the meshes whose parts are still there, make the new ones, dispose the rest. */
 	update(items, now) {
 		const next = new Map(), seen = new Map();
+		const stagger = Math.min(REVEAL_STEP_MAX_MS, REVEAL_TOTAL_MS / Math.max(1, items.length));
+		let added = 0;
 		for (const item of items) {
 			const n = (seen.get(item.identity) ?? 0) + 1;
 			seen.set(item.identity, n);
@@ -75,7 +80,7 @@ class SketchLayer {
 			let entry = this.meshes.get(key);
 			if (entry) this.meshes.delete(key);
 			else {
-				try { entry = this.make(item.part, now); } catch { continue; }
+				try { entry = this.make(item.part, now + added++ * stagger); } catch { continue; }
 			}
 			entry.base.copy(item.matrix);
 			next.set(key, entry);

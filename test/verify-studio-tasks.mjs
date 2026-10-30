@@ -384,6 +384,7 @@ const { MAIN_SYSTEM_PROMPT } = await import("../bin/agent/main-prompt.mjs");
 			return fauxAssistantMessage([fauxText("큐브와 구를 옮기는 작업 두 개를 시작했고, 의자는 바로 옮겼어요.")]);
 		}
 		const target = said(context, `Move ${ids.cube}`) ? ids.cube : ids.sphere, to = target === ids.cube ? 1 : 2;
+		if (toolResults(context) === 0 && target === ids.cube) return fauxAssistantMessage([fauxToolCall("script", { code: `await tools.run_action({ action: "object.add", args: { kind: "cube", name: "Preview crate", placement: { x: 0, y: 0, z: 0 } } });\nawait tools.run_action({ action: "object.set", args: { id: ${JSON.stringify(target)}, set: { position: { x: ${to}, y: 0, z: 0 } } } });` }, { id: `t-${randomUUID()}` })]);
 		if (toolResults(context) === 0) return fauxAssistantMessage([fauxToolCall("run_action", { action: "object.set", args: { id: target, set: { position: { x: to, y: 0, z: 0 } } } }, { id: `t-${randomUUID()}` })]);
 		return fauxAssistantMessage([fauxText(`Moved ${target} to x ${to}. QA: none.`)]);
 	};
@@ -421,6 +422,12 @@ const { MAIN_SYSTEM_PROMPT } = await import("../bin/agent/main-prompt.mjs");
 	assert.equal(mainTurns, 1, "the main agent reported once on its own when the tasks ended");
 	const turnReplay = await (await get(`/agent/turn/${encodeURIComponent(board[0].turnId)}/events?after=0`)).text();
 	assert.match(turnReplay, /"type":"done"/, "a task's frames replay on its turn like any turn's");
+	const feedReader = (await get(`/agent/main/${sessionId}/events?after=0`)).body.getReader();
+	let mainFeed = "", feedStop = Date.now() + 300;
+	while (Date.now() < feedStop) { const chunk = await Promise.race([feedReader.read(), new Promise(r => setTimeout(() => r(null), feedStop - Date.now()))]); if (!chunk || chunk.done) break; mainFeed += new TextDecoder().decode(chunk.value); }
+	await feedReader.cancel();
+	assert.match(mainFeed, /"type":"sculpt.sketch".*"name":"Preview crate"/, "the child's scene preview reaches the user's main feed");
+	assert.match(mainFeed, /"type":"tool.done".*"preview":true/, "its sanitized completion clears the ghost without exposing child receipts");
 	const metas = readdirSync(sessionDir).filter(name => name.endsWith(".meta.json")).map(name => JSON.parse(readFileSync(join(sessionDir, name), "utf8")));
 	assert.equal(metas.filter(meta => meta.parentId === sessionId).length, 2, "task sessions keep their parent's id");
 	const listed = (await (await get("/agent/sessions?surface=studio")).json()).sessions;

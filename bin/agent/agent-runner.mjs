@@ -455,7 +455,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				queue.push(frame);
 			};
 			// The reasoning summary and the tool call being written, for the panel (turn-frames.mjs).
-			const reasoning = createReasoningFrames(pushFrame, clock);
+			const reasoning = createReasoningFrames(pushFrame, clock, { onScene: state.lastInput?.onScene });
 			const startTool = (event) => {
 				if (toolStarted.has(event.toolCallId)) return;
 				toolStarted.add(event.toolCallId);
