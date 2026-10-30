@@ -6,6 +6,9 @@ import { fail, characterOf } from "./shared.js";
 import { specIdOf } from "../motion3/spec-store.js";
 import { MOTION_ACTION_HELP as HELP } from "../motion3/docs.js";
 import { isFillKey } from "../motion3/bricks/fill-src.js";
+import { expandPoses } from "../motion3/poses.js";
+import { skeletonFor } from "../motion3/rigs/index.js";
+import { applyPatch } from "../motion3/json-patch.js";
 
 const id = { type: "string", minLength: 1 };
 const openObject = { type: "object", properties: {}, required: [], additionalProperties: true };
@@ -14,7 +17,7 @@ const FILL_TIMEOUT_MS = 90000;
 export const declarations = Object.freeze([
 	{ id: "motion.fill", label: "Fill transition between two poses", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.fill,
 		input: { type: "object", properties: { characterId: id, spec: openObject, base: { type: "string", pattern: "^spec-[0-9a-f]{12}$" },
-			at: { type: "integer", minimum: 0 }, timing: { type: "string", enum: ["exact", "free", "retime", "playground"] }, gate: { type: "boolean" }, install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } },
+			patch: { type: "array", items: openObject, maxItems: 64 }, at: { type: "integer", minimum: 0 }, timing: { type: "string", enum: ["exact", "free", "retime", "playground"] }, gate: { type: "boolean" }, install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true } },
 		required: ["characterId"], additionalProperties: false } },
 ]);
 
@@ -83,9 +86,14 @@ export function autoFill(ports, character, spec) {
 
 export function register(registry, ports) {
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
-	registry.register({ ...declarations[0], available: mounted, target: args => args.characterId, async run({ characterId, spec, base, at, timing, gate, install = true }, context) {
+	registry.register({ ...declarations[0], available: mounted, target: args => args.characterId, async run({ characterId, spec, base, patch, at, timing, gate, install = true }, context) {
 		const character = characterOf(ports, characterId);
-		const source = fillSource({ spec, base }, b => registry.motionSpecOf?.(b), ports.storeDomain("motion")?.motionFor(characterId)?.spec);
+		if (patch !== undefined && base === undefined) fail("INVALID_ARGUMENT", "patch applies to base, the specId of a compiled spec; send base with it.");
+		// base + patch (a few ops: a key's pose, a frame) re-fills the patched spec instead of the agent writing it out again
+		const sent = fillSource({ spec, base }, b => registry.motionSpecOf?.(b), ports.storeDomain("motion")?.motionFor(characterId)?.spec);
+		let patched = sent;
+		if (patch?.length) try { patched = applyPatch(sent, patch, []); } catch (error) { fail("INVALID_ARGUMENT", error.message.replace(/^MOTION_SPEC_INVALID:\s*/, "")); }
+		const source = expandPoses(patched, skeletonFor(character.model));
 		const filled = await requestFill(ports.fetch ?? globalThis.fetch, { spec: source, model: character.model, objects: ports.state?.().objects ?? [], ...(at === undefined ? {} : { at }), ...(timing ? { timing } : {}), ...(gate === undefined ? {} : { gate }) });
 		// the brief rides in the compile's own output (fitted to the receipt budget with it); the playground fill is kept as generated: no repair or thinning
 		const fill = fillBrief(filled, source);

@@ -5,6 +5,7 @@
 import { fail, characterOf } from "./shared.js";
 import { motionScene } from "../motion3/scene.js";
 import { skeletonFor } from "../motion3/rigs/index.js";
+import { expandPoses } from "../motion3/poses.js";
 import { fk } from "../motion3/compiler/skeleton.js";
 import { add, apply, ry } from "../motion3/compiler/math.js";
 import { resolveBone } from "../motion3/bones.js";
@@ -169,7 +170,7 @@ export function register(registry, ports) {
 		if (patch !== undefined && base === undefined) fail("INVALID_ARGUMENT", "patch applies to base, the specId of a compiled spec; send base with it, or the whole spec.");
 		// a base the store forgot (a reload) may still be the installed take's spec: a document read names it by specId
 		const installedSpec = () => { const take = owner().motionFor(characterId); return take?.spec && specIdOf(take.spec) === base ? structuredClone(take.spec) : null; };
-		const patched = [], source = spec ?? asArgument(() => applyPatch(store.get(base) ?? installedSpec() ?? unknownSpec("base", base), patch ?? [], patched));
+		const patched = [], source = spec ? expandPoses(spec, skeletonFor(characterOf(ports, characterId).model)) : asArgument(() => applyPatch(store.get(base) ?? installedSpec() ?? unknownSpec("base", base), patch ?? [], patched));
 		const scene = sceneFor(character), at = placeKey(character, scene);
 		// the take is always baked: the user watches every draft, installed or not
 		// MotionBricks fills between the authored key poses first when spec.fill is true and the dev server can run it (motion3-fill.js autoFill)

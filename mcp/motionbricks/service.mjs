@@ -7,6 +7,7 @@ import { motionScene } from "../../src/motion3/scene.js";
 import { fillSpec } from "../../src/motion3/bricks/fill.js";
 import { fillSpecNative } from "../../src/motion3/bricks/fill-native.js";
 import { createRunner } from "./model.mjs";
+import { expandPoses } from "../../src/motion3/poses.js";
 
 let runner;
 
@@ -19,6 +20,7 @@ export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = fals
 	if (at !== undefined && !Number.isInteger(at)) throw Object.assign(new Error("at must be a whole frame"), { code: "INVALID_ARGUMENT" });
 	const sk = skeletonFor(model);
 	if (!sk) throw Object.assign(new Error(`${model} is not a rig the fill can drive`), { code: "TARGET_NOT_READY" });
+	spec = expandPoses(spec, sk);
 	const t0 = performance.now();
 	const run = await (runner ??= createRunner().catch(error => { runner = undefined; throw error; }));
 	// the editor's scene objects (motion3-fill.js sends them): an anchor or a check naming a wall, a table or a door handle compiles here too

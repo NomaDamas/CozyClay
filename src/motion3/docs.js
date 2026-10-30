@@ -13,7 +13,7 @@ export const MOTION_ACTION_HELP = {
 		+ "qa judges only what is broken; speed, balance and bends are observations unless checks.limits names them. "
 		+ "Answers brief (qa, misses, top groups: a script returns it as is), frames, installed, stuck (when to stop), specId, qa { ok, total, goals, groups (GOAL first, then severity; cause, hint, repair patch?) }, observations (asked: skill ends, contacts, goal points), delta (with base), repair, probes, timeline, fixed, search, skills. more: motion.report pages the rest.",
 	fill: "MotionBricks generates the transition between two poses for each gap between authored key poses (at most 46 frames); author 2-4 poses (armw on), then call this instead of plain interpolation. "
-		+ "Send spec (or base) with the poses as keys; gaps become keys marked src: \"fill\", then it compiles, runs QA and installs like motion.compile (plus output.fill). "
+		+ "Send spec (keys may name a pose: { f, pose: \"sit_floor\" }) or base + patch; gaps become keys marked src: \"fill\", then it compiles, runs QA and installs like motion.compile (plus output.fill). "
 		+ "at: re-fills only the gaps beside that frame. timing: exact (keeps the key frames), retime or playground (the model sets the pace; output.fill.moved), free. Needs the dev server; topic fill.",
 	qa: "Measure the character's installed take again against the scene as it is now (objects may have moved). Optional checks replace the spec's checks and its skills' checks. "
 		+ "Answers specId and qa as motion.compile does (goals, ranked groups with cause, hint and patch); output.more pages with motion.report. Changes nothing.",
