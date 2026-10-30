@@ -38,8 +38,9 @@ function sandboxPrelude(shapes, fields, maxParts) {
 		if (arrangement && Array.isArray(payload?.ops)) sceneCalls.push({ kind: arrangement.includes("character") ? "characters" : "objects", ops: payload.ops });
 		if (name === "run_action" && inner && args.action === "object.add") sceneCalls.push({ kind: "objects", add: inner });
 		if (name === "run_action" && inner && args.action === "character.add") sceneCalls.push({ kind: "characters", add: inner.character });
-		if (name === "run_action" && args.action === "objects.batch" && Array.isArray(inner?.ops)) for (const op of inner.ops) {
-			if (op?.name === "object.add") sceneCalls.push({ kind: "objects", add: op.args });
+		if (name === "run_action" && args.action === "objects.batch" && inner?.atomic === true) sceneCalls.push({ kind: "objects", atomic: true });
+		else if (name === "run_action" && args.action === "objects.batch" && Array.isArray(inner?.ops)) for (const op of inner.ops) {
+			if (op?.name === "object.add" || op?.name === "place_object") sceneCalls.push({ kind: "objects", add: op.args });
 			else if (op?.name === "objects.arrange" && Array.isArray(op.args?.ops)) sceneCalls.push({ kind: "objects", ops: op.args.ops });
 		}
 		return Promise.resolve(fake());

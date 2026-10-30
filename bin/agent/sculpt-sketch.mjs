@@ -11,8 +11,7 @@ import { dryRunSketch, SKETCH_MAX_PARTS } from "./sketch-sandbox.mjs";
 const SKETCH_MS = 250;
 /** Dry runs in flight across the sidecar: a sketch never competes with the turn for the machine. */
 const MAX_RUNNING = 2, MAX_FRAME_CHARS = 48 * 1024;
-const MAX_GROUPS = 16;
-const MAX_RAW_CHARS = 512 * 1024;
+const MAX_GROUPS = 16, MAX_RAW_CHARS = 512 * 1024;
 const COLOR = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i;
 
 // Catalogue primitives are translated into the sculpt ghost's small shape vocabulary. Unknown kinds
@@ -141,7 +140,7 @@ function directScene(state) {
 	if (!args || typeof args !== "object") return null;
 	if (args.action === "object.add" || args.action === "character.add") return state.complete ? { scene: [{ kind: args.action === "character.add" ? "characters" : "objects", add: args.action === "character.add" ? args.args?.character : args.args }] } : null;
 	if (args.action === "objects.arrange" || args.action === "characters.arrange") return { scene: [{ kind: args.action === "characters.arrange" ? "characters" : "objects", ops: state.complete ? args.args?.ops : args.args?.ops?.slice(0, -1) }] };
-	if (args.action === "objects.batch") return { scene: batchSceneEntries(state.complete ? args.args : { ...args.args, ops: args.args?.ops?.slice(0, -1) }) };
+	if (args.action === "objects.batch") return args.args?.atomic === true ? null : { scene: batchSceneEntries(state.complete ? args.args : { ...args.args, ops: args.args?.ops?.slice(0, -1) }) };
 	if (args.action) return null;
 	if (state.call.name !== "arrange_objects" && state.call.name !== "arrange_characters") return null;
 	return { scene: [{ kind: state.call.name === "arrange_characters" ? "characters" : "objects", ops: state.complete ? args.ops : args.ops?.slice(0, -1) }] };
@@ -231,7 +230,8 @@ export function createSculptSketch(push, clock = () => Date.now(), { onScene } =
 	const schedule = (state) => {
 		if (state.closed) return;
 		if (state.running) { state.again ||= state.complete; return; }
-		if (!state.complete && (clock() - state.at < SKETCH_MS || running >= MAX_RUNNING)) return;
+		const interval = state.kind === "script" ? Math.min(1000, SKETCH_MS + Math.floor(streamedCode(state.call, state.raw).length / 8000) * 250) : SKETCH_MS;
+		if (!state.complete && (clock() - state.at < interval || running >= MAX_RUNNING)) return;
 		state.at = clock();
 		running += 1;
 		state.running = (async () => {

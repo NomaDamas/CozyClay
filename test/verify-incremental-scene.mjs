@@ -9,8 +9,10 @@ const receipt = (action, ids) => ({ ok: true, action, status: "applied", receipt
 function record(action, args) {
 	calls.push({ action, args });
 	const ids = [];
-	if (action === "object.add") { const id = args.name || `${args.kind}-${objects.length}`; objects.push({ id, ...args }); ids.push(id); }
+	if (action === "object.add" || action === "place_object") { const id = args.name || `${args.kind}-${objects.length}`; objects.push({ id, ...args }); ids.push(id); }
 	if (action === "character.add") { const id = args.subject || `character-${characters.length}`; characters.push({ id, ...args }); ids.push(id); }
+	if (action === "object.remove") for (const id of args.ids) { const at = objects.findIndex(row => row.id === id); if (at >= 0) objects.splice(at, 1); ids.push(id); }
+	if (action === "objects.batch") for (const op of args.ops) record(op.name, op.args);
 	if (action === "objects.arrange" || action === "characters.arrange") for (const op of args.ops) {
 		const target = action === "objects.arrange" ? objects : characters;
 		if (op.op === "create") { if (op.color) throw Object.assign(new Error("color is not accepted here"), { code: "INVALID_ARGUMENT" }); const id = op.name === "Parent" ? "object-parent" : op.name || `created-${target.length}`; target.push({ id, ...op }); ids.push(id); }
@@ -102,6 +104,27 @@ await wrapped[1].handler({ ops: [
 ] }, { callId: "retry-2" });
 assert.equal(objects.filter(object => object.id === "RetryHouse").length, 1);
 assert.equal(objects.filter(object => object.id === "RetryWalls").length, 1);
+
+// Re-emitted prefixes do not execute or canonicalize completed work again.
+const beforeRepeat = calls.length;
+const repeatScene = [{ kind: "objects", add: { kind: "cube", name: "Once only" } }];
+incremental.onScene({ callId: "repeat-1", index: 4, scene: repeatScene });
+incremental.onScene({ callId: "repeat-1", index: 4, scene: repeatScene });
+await incremental.settled();
+assert.equal(calls.length - beforeRepeat, 1, "the same streamed prefix has no second execution");
+
+// Remove and recreate must not reuse the removed object's receipt.
+await run("object.add", { kind: "cube", name: "Recreate me" }, "recreate-1");
+await run("object.remove", { ids: ["Recreate me"] }, "recreate-2");
+await run("object.add", { kind: "cube", name: "Recreate me" }, "recreate-3");
+assert.equal(objects.filter(object => object.id === "Recreate me").length, 1);
+assert.equal(calls.filter(call => call.action === "object.add" && call.args.name === "Recreate me").length, 2);
+
+// Atomic batches stay atomic: no early object.add, only the original batch execution.
+const beforeAtomic = calls.length;
+await run("objects.batch", { atomic: true, ops: [{ name: "place_object", args: { kind: "cube", name: "Atomic" } }] }, "atomic-1");
+assert.equal(calls.length - beforeAtomic, 2, "one batch and its nested add, with no incremental pre-execution");
+assert.equal(objects.filter(object => object.id === "Atomic").length, 1);
 
 // Batch and cast creation use the same once-only path.
 await run("objects.batch", { ops: [{ name: "object.add", args: { kind: "cone", name: "Batched" } }] }, "batch-1");

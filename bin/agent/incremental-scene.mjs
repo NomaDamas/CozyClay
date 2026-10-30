@@ -29,9 +29,10 @@ function directCreations(name, args) {
 	if (args?.action === "character.add") return creations([{ kind: "characters", add: args.args?.character }]);
 	if (args?.action === "objects.arrange" || args?.action === "characters.arrange") return creations([{ kind: args.action === "characters.arrange" ? "characters" : "objects", ops: args.args?.ops }]);
 	if (args?.action === "objects.batch") {
+		if (args.args?.atomic === true) return null;
 		const scene = [];
 		for (const op of Array.isArray(args.args?.ops) ? args.args.ops : []) {
-			if (op?.name === "object.add") scene.push({ kind: "objects", add: op.args });
+			if (op?.name === "object.add" || op?.name === "place_object") scene.push({ kind: "objects", add: op.args });
 			else if (op?.name === "objects.arrange") scene.push({ kind: "objects", ops: op.args?.ops });
 		}
 		return creations(scene);
@@ -55,7 +56,7 @@ function remainingArgs(name, args, executed) {
 	if (args?.action === "objects.batch") {
 		const ops = [];
 		for (const op of args.args?.ops ?? []) {
-			if (op?.name === "object.add") continue;
+			if (op?.name === "object.add" || op?.name === "place_object") continue;
 			if (op?.name === "objects.arrange") {
 				const rest = (op.args?.ops ?? []).filter(part => !isCreate(part) || !executed.has(signature({ kind: "objects", op: part })));
 				if (rest.length) ops.push({ ...op, args: { ...op.args, ops: rest } });
@@ -86,14 +87,22 @@ export function createIncrementalScene({ tools, signal } = {}) {
 	const states = new Map(), named = new Map();
 	let queue = Promise.resolve();
 	const stateOf = callId => {
-		if (!states.has(callId)) states.set(callId, { receipts: new Map(), inflight: new Map(), reserved: new Set(), failed: new Set(), executed: new Set(), createdNames: new Map() });
+		if (!states.has(callId)) states.set(callId, { receipts: new Map(), inflight: new Map(), reserved: new Set(), failed: new Set(), executed: new Set(), createdNames: new Map(), streamed: 0, occurrences: new Map() });
 		return states.get(callId);
 	};
 	const invoke = (toolName, args, call = {}) => original.get(toolName).handler(args, call);
+	const reset = () => { states.clear(); named.clear(); };
+	function invalidates(name, args) {
+		if (name === "patch_elements" || name === "undo_edit") return true;
+		if (name === "arrange_objects" || name === "arrange_characters") return (args?.ops ?? []).some(op => op.op !== "create");
+		if (name !== "run_action") return false;
+		if (args?.action === "objects.batch") return (args.args?.ops ?? []).some(op => !["object.add", "place_object", "objects.arrange"].includes(op.name) || op.args?.ops?.some(part => part.op !== "create"));
+		return /^(object|character|edit|agent\.turn|task)\./.test(args?.action ?? "");
+	}
 
-	function runEntries(callId, scene, call, final) {
-		const state = stateOf(callId), counts = new Map(), jobs = [], previous = queue;
-		for (const entry of creations(scene)) {
+	function runEntries(callId, scene, call, final, start = 0) {
+		const state = stateOf(callId), counts = final ? new Map() : state.occurrences, jobs = [], previous = queue;
+		for (const entry of creations(scene).slice(start)) {
 			const id = signature(entry), occurrence = counts.get(id) ?? 0;
 			counts.set(id, occurrence + 1);
 			const key = `${id}#${occurrence}`;
@@ -155,8 +164,8 @@ export function createIncrementalScene({ tools, signal } = {}) {
 		return jobs;
 	}
 
-	function schedule(callId, scene, call = {}, final = false) {
-		const jobs = runEntries(callId, scene, call, final);
+	function schedule(callId, scene, call = {}, final = false, start = 0) {
+		const jobs = runEntries(callId, scene, call, final, start);
 		const receipts = [];
 		queue = queue.then(async () => {
 			for (const job of jobs) receipts.push(await job());
@@ -181,15 +190,23 @@ export function createIncrementalScene({ tools, signal } = {}) {
 				for (const key of before.failed) after.failed.add(key);
 				for (const id of before.executed) after.executed.add(id);
 				for (const [name, id] of before.createdNames) after.createdNames.set(name, id);
-				states.delete(provisional);
+				for (const [id, count] of before.occurrences) after.occurrences.set(id, count);
+			after.streamed = Math.max(after.streamed, before.streamed);
+			states.delete(provisional);
 			}
-			schedule(callId ?? provisional, scene, { signal, callId });
+			const state = stateOf(callId ?? provisional), count = creations(scene).length;
+			schedule(callId ?? provisional, scene, { signal, callId }, false, state.streamed);
+			state.streamed = count;
 		},
 		wrap(tool) {
 			return { ...tool,
 				handler: async (args, call = {}) => {
 					const scene = directCreations(tool.name, args);
-					if (!scene) return invoke(tool.name, args, call);
+					if (!scene) {
+						const result = await invoke(tool.name, args, call);
+						if (invalidates(tool.name, args)) reset();
+						return result;
+					}
 					const callId = call.callId ?? call.toolCallId ?? `#direct:${tool.name}`;
 					const { receipts, state } = schedule(callId, scene, call, true);
 					const pending = remainingArgs(tool.name, args, state.executed);
@@ -201,7 +218,9 @@ export function createIncrementalScene({ tools, signal } = {}) {
 						rest = await run;
 					}
 					const own = await receipts();
-					return rest ?? aggregate(own.filter(Boolean)) ?? invoke(tool.name, args, call);
+					const result = rest ?? aggregate(own.filter(Boolean)) ?? invoke(tool.name, args, call);
+					if (pending && invalidates(tool.name, args)) reset();
+					return result;
 				} };
 		},
 	};
