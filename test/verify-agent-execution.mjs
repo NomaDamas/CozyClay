@@ -904,7 +904,7 @@ for (const [drafts, expected] of [
 	const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
 	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
 	const hub = {
-		command: async (name) => (name === "arrange_objects" ? { ok: false, code: "TARGET_NOT_READY", message: "private refusal", phase: "admission", recovery: { action: "none" } } : { revision: { scene: 41 }, entities: [] }),
+		command: async (name, payload) => (name === "arrange_objects" || (name === "run_action" && payload.args?.action === "objects.arrange") ? { ok: false, code: "TARGET_NOT_READY", message: "private refusal", phase: "admission", recovery: { action: "none" } } : { revision: { scene: 41 }, entities: [] }),
 		workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"],
 	};
 	const model = createFakeModel();

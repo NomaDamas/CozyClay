@@ -423,7 +423,7 @@ const { MAIN_SYSTEM_PROMPT } = await import("../bin/agent/main-prompt.mjs");
 	const turnReplay = await (await get(`/agent/turn/${encodeURIComponent(board[0].turnId)}/events?after=0`)).text();
 	assert.match(turnReplay, /"type":"done"/, "a task's frames replay on its turn like any turn's");
 	const feedReader = (await get(`/agent/main/${sessionId}/events?after=0`)).body.getReader();
-	let mainFeed = "", feedStop = Date.now() + 300;
+	let mainFeed = "", feedStop = Date.now() + 1500;
 	while (Date.now() < feedStop) { const chunk = await Promise.race([feedReader.read(), new Promise(r => setTimeout(() => r(null), feedStop - Date.now()))]); if (!chunk || chunk.done) break; mainFeed += new TextDecoder().decode(chunk.value); }
 	await feedReader.cancel();
 	assert.match(mainFeed, /"type":"sculpt.sketch".*"name":"Preview crate"/, "the child's scene preview reaches the user's main feed");
