@@ -515,7 +515,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					if (event.assistantMessageEvent?.type === "text_delta") pushFrame({ type: "text.delta", text: event.assistantMessageEvent.delta });
 				} else if (event.type === "tool_execution_start") startTool(event);
 				else if (event.type === "tool_execution_end") endTool(event);
-				else if (event.type === "agent_end") finish(event);
+				else if (event.type === "agent_end") Promise.resolve(reasoning.settled()).then(() => finish(event));
 			});
 		};
 
