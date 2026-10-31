@@ -280,6 +280,7 @@
 	"test/verify-agent-reply-text.mjs": 0,
 	"test/verify-agent-routes.mjs": 1.4,
 	"test/verify-agent-runner-errors.mjs": 9.8,
+	"test/verify-incremental-scene.mjs": 0.5,
 	"test/verify-agent-script-tool.mjs": 0.4,
 	"test/verify-agent-sculpt-sketch.mjs": 2.6,
 	"test/verify-agent-sse-golden.mjs": 0.3,

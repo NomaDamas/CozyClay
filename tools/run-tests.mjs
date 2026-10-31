@@ -49,7 +49,7 @@ const NODE_FILES = [
 	"test/process/verify-package-telemetry.mjs",
 	"test/process/verify-agent-deps.mjs",
 	"test/verify-agent-image-references.mjs",
-	"test/verify-agent-panel.mjs", "test/verify-agent-turn-view.mjs", "test/verify-agent-plan.mjs", "test/verify-agent-reply-text.mjs", "test/verify-agent-sculpt-sketch.mjs",
+	"test/verify-agent-panel.mjs", "test/verify-agent-turn-view.mjs", "test/verify-agent-plan.mjs", "test/verify-agent-reply-text.mjs", "test/verify-agent-sculpt-sketch.mjs", "test/verify-incremental-scene.mjs",
 	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-studio-owner-restart.mjs",
