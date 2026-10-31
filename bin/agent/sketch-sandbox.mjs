@@ -1,8 +1,8 @@
 // The dry run behind the live sketch (sculpt-sketch.mjs): a cut of the script the model is still writing
 // (sketch-code.mjs) runs in its own throwaway QuickJS sandbox (pi-codemode, like the real `script` tool) with a
 // short deadline and a small heap. Every `tools.*` call there is a stub that changes nothing and answers a benign
-// fake result; an object.sculpt call is only recorded. The model's code is the same code that runs for real
-// moments later, with the real tools; here it can only fill arrays, and the parts it put in them come back.
+// fake result; object.sculpt and scene-creation calls are only recorded. The model's code is the same code that
+// runs for real moments later, with the real tools; here it can only fill arrays and report the parts it wrote.
 
 const TIMEOUT_MS = 250;
 const MEMORY_LIMIT_BYTES = 32 * 1024 * 1024;
@@ -17,7 +17,7 @@ export const SKETCH_MAX_PARTS = 300;
  * placement), then the named arrays in source order, each part in the first group that holds it.
  */
 function sandboxPrelude(shapes, fields, maxParts) {
-	const SHAPES = new Set(shapes), tracked = [], calls = [];
+	const SHAPES = new Set(shapes), tracked = [], calls = [], sceneCalls = [];
 	const isPart = (value) => value !== null && typeof value === "object" && !Array.isArray(value) && SHAPES.has(value.shape) && value.size !== null && typeof value.size === "object";
 	const track = (list) => {
 		if (!Array.isArray(list) || tracked.includes(list)) return false;
@@ -27,8 +27,21 @@ function sandboxPrelude(shapes, fields, maxParts) {
 	const fake = () => ({ ok: true, status: "completed", receiptId: "sketch", revision: 0, affectedIds: [], delta: [], warnings: [], summary: "", id: "sketch", ids: [] });
 	const call = (name, args) => {
 		const inner = args && typeof args === "object" ? args.args : null;
+		const payload = name === "run_action" ? inner : args;
 		if (name === "run_action" && inner && args.action === "object.sculpt" && inner.recipe && Array.isArray(inner.recipe.parts)) {
 			calls.push({ parts: inner.recipe.parts, name: inner.name, id: inner.id, placement: inner.placement });
+		}
+		// Scene previews use the same dry run, but these calls only record intent.
+		// They never resolve ids, mutate a document or reach the real editor.
+		const arrangement = name === "arrange_objects" || name === "arrange_characters" ? name
+			: name === "run_action" && (args.action === "objects.arrange" || args.action === "characters.arrange") ? args.action : null;
+		if (arrangement && Array.isArray(payload?.ops)) sceneCalls.push({ kind: arrangement.includes("character") ? "characters" : "objects", ops: payload.ops });
+		if (name === "run_action" && inner && args.action === "object.add") sceneCalls.push({ kind: "objects", add: inner });
+		if (name === "run_action" && inner && args.action === "character.add") sceneCalls.push({ kind: "characters", add: inner.character });
+		if (name === "run_action" && args.action === "objects.batch" && inner?.atomic === true) sceneCalls.push({ kind: "objects", atomic: true });
+		else if (name === "run_action" && args.action === "objects.batch" && Array.isArray(inner?.ops)) for (const op of inner.ops) {
+			if (op?.name === "object.add" || op?.name === "place_object") sceneCalls.push({ kind: "objects", add: op.args });
+			else if (op?.name === "objects.arrange" && Array.isArray(op.args?.ops)) sceneCalls.push({ kind: "objects", ops: op.args.ops });
 		}
 		return Promise.resolve(fake());
 	};
@@ -52,8 +65,16 @@ function sandboxPrelude(shapes, fields, maxParts) {
 		if (part.op !== undefined && part.op !== null) out.op = true;
 		return out;
 	};
-	const dump = () => {
-		const claimed = new Set(), groups = [];
+	const capture = value => {
+		if (typeof value === "function") return { __fn: String(value) };
+		if (value === undefined) return undefined;
+		try { return JSON.parse(JSON.stringify(value)); } catch { return undefined; }
+	};
+	const dump = (names) => {
+		const claimed = new Set(), groups = [], scope = {};
+		for (const name of names) {
+			try { const value = capture(eval(name)); if (value !== undefined) scope[name] = value; } catch { /* local or undeclared */ }
+		}
 		const take = (list) => {
 			const out = [];
 			for (let index = 0; index < list.length && claimed.size < maxParts; index += 1) {
@@ -67,32 +88,37 @@ function sandboxPrelude(shapes, fields, maxParts) {
 			groups.push({ key: at >= 0 ? `a${at}` : `c${index}`, name: entry.name, id: entry.id, placement: entry.placement, parts: take(entry.parts) });
 		});
 		tracked.forEach((list, index) => groups.push({ key: `a${index}`, parts: take(list) }));
-		return { groups: groups.filter((group) => group.parts.length > 0) };
+		return { groups: groups.filter((group) => group.parts.length > 0), scene: sceneCalls, scope };
 	};
 	return { tools, see, dump };
 }
 
 /** What runs in the sandbox: the prelude, the cut inside a try, and a finally that shows the prelude every declared name and always reports. */
-function sandboxSource(source, names, shapes, keys) {
+function sandboxSource(source, names, shapes, keys, store) {
 	const fields = ["id", "shape", "size", "position", "rotation", "color", "parent", "mirror", ...keys];
-	const seen = names.map((name) => `try { __cozySketch.see(${name}); } catch {}`).join(" ");
+	const allNames = [...new Set([...Object.keys(store ?? {}), ...names])];
+	const seen = allNames.map((name) => `try { __cozySketch.see(${name}); } catch {}`).join(" ");
+	const restore = Object.entries(store ?? {}).map(([name, value]) => value && typeof value === "object" && typeof value.__fn === "string"
+		? `var ${name} = eval(${JSON.stringify(`(${value.__fn})`)});`
+		: `var ${name} = load(${JSON.stringify(name)});`).join("\n");
 	return [
 		`const __cozySketch = (${sandboxPrelude})(${JSON.stringify(shapes)}, ${JSON.stringify(fields)}, ${SKETCH_MAX_PARTS});`,
 		"tools = __cozySketch.tools;",
-		`try {\n${source}\n} finally { ${seen} return __cozySketch.dump(); }`,
+		restore,
+		`try {\n${source}\n} finally { ${seen} return __cozySketch.dump(${JSON.stringify(allNames)}); }`,
 	].join("\n");
 }
 
 /**
- * dryRunSketch(source, names, { shapes, keys }) -> { groups } | null. `source` is a compiled cut (runnablePrefix),
+ * dryRunSketch(source, names, { shapes, keys }) -> { groups, scene } | null. `source` is a compiled cut (runnablePrefix),
  * `names` its declared names (declaredNames), `shapes`/`keys` the sculpt shapes and their shape-only keys. Null when
  * the run failed (deadline, heap, a parse error the compile check missed): the caller keeps its last sketch.
  */
-export async function dryRunSketch(source, names, { shapes, keys, timeoutMs = TIMEOUT_MS } = {}) {
+export async function dryRunSketch(source, names, { shapes, keys, timeoutMs = TIMEOUT_MS, store } = {}) {
 	const { CodemodeSandbox } = await import("@earendil-works/pi-codemode");
 	const sandbox = new CodemodeSandbox({ timeoutMs, memoryLimitBytes: MEMORY_LIMIT_BYTES, tools: [] });
 	try {
-		const result = await sandbox.execute(sandboxSource(source, names, shapes, keys));
+		const result = await sandbox.execute(sandboxSource(source, names, shapes, keys, store), { store });
 		return result.ok && Array.isArray(result.value?.groups) ? result.value : null;
 	} catch {
 		return null;

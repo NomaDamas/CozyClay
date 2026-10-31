@@ -428,9 +428,10 @@ export function sampledFramingResult(args, scene, ports, frameCount, measured, r
 }
 export function frameDraft(command, state, ports) {
   if (state.frameCount <= 0) fail('TARGET_NOT_READY', 'A nonempty timeline is required.');
-  const subject = state.characters.find(e => e.id === command.args.subjectIds[0]);
-  if (!subject || subject.hidden) fail('TARGET_NOT_READY', 'Framing requires one visible character.');
-  const points = geometry(subject, state, ports), bounds = aabb(points), height = bounds.y.max - bounds.y.min;
+  const subject = [...state.characters, ...state.objects].find(e => e.id === command.args.subjectIds[0]); if (!subject || subject.hidden) fail('TARGET_NOT_READY', 'Framing requires one visible object or character.');
+  // An Empty is only a parent: frame the union of its parts, not the empty pivot.
+  const parts = subject.renderer === 'empty' ? descendantsOf(state.objects, subject.id).filter(part => part.renderer !== 'empty') : [], points = subject.renderer === 'empty' && parts.length ? parts.flatMap(part => geometry(part, state, ports)) : geometry(subject, state, ports);
+  const bounds = aabb(points), height = bounds.y.max - bounds.y.min;
   if (height <= EPS || !state.camera || !SENSOR_FORMATS[state.filmback?.sensorId] || !(state.filmback.aspectRatio > 0)) fail('TARGET_NOT_READY', 'Subject stature and camera filmback must be available.');
   let shot = command.args.shotId ? state.shotDocument.shots.find(s => s.id === command.args.shotId) : shotAtFrame(state.shotDocument.shots, state.frame) ?? state.shotDocument.shots.find(s => s.id === state.selectedShotId);
   const created = !shot && !state.shotDocument.shots.length && !command.args.shotId;

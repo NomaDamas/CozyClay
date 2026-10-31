@@ -97,6 +97,17 @@ export function createStudioTaskRoutes({ enabled, handleStudioTurn, studioSessio
 		task.steer = text => session()?.modelSession?.steer(text, []);
 		let pending = 0, seenRead = Promise.resolve();
 		const observe = frame => {
+			// Child-task previews belong on the user's main feed, not only on the child's
+			// private replay. Forward just the ghost and its sanitized completion: raw child
+			// tool results and receipts stay out of the coordinator's transcript.
+			if (frame.type === "sculpt.sketch") {
+				const callId = frame.callId ?? `${task.taskId}:${frame.index}`;
+				(task.previewCalls ??= new Set()).add(callId);
+				main.notify({ ...frame, callId, taskId: task.taskId });
+			} else if (frame.type === "tool.done" && task.previewCalls?.size) {
+				for (const callId of task.previewCalls) main.notify({ type: "tool.done", callId, ok: frame.ok, result: null, error: frame.error, taskId: task.taskId, preview: true });
+				task.previewCalls.clear();
+			}
 			task.onFrame?.(frame);
 			if (frame.type === "tool.start") pending++;
 			if (frame.type === "tool.done") pending = Math.max(0, pending - 1);

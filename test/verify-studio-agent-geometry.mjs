@@ -22,7 +22,7 @@ function fixture() {
     filmback: { sensorId: 'fullFrame', aspectRatio: 16 / 9 }, manual: false };
   const ports = { bounds: ({ entity, frame }) => {
     assert.equal(frame, state.frame);
-    if (entity.id === 'unready') return null;
+    if (entity.id === 'unready' || entity.renderer === 'empty') return null;
     const scale = entity.scale ?? 1;
     return { min: { x: entity.x - 0.25 * scale, y: entity.y, z: entity.z - 0.15 * scale },
       max: { x: entity.x + 0.25 * scale, y: entity.y + 1.8 * scale, z: entity.z + 0.15 * scale } };
@@ -241,6 +241,19 @@ test('framing: independent filmback inversion, key/lens/aim boundaries and measu
   const fractions = [0, 4].map(z => fixture().prepare('frame_shot', { subjectIds: ['alex'], framing: { exact: { position: { x: 0, y: 1, z: 5 }, lookAt: { x: 0, y: 1, z }, focalMm: 35 } } }).checks.screenFraction);
   near(...fractions);
 });
+test('framing: an object-only scene can frame a grouped prop without a character', () => {
+  const f = fixture();
+  f.state.characters = [];
+  seed(f, { id: 'house', renderer: 'empty' });
+  seed(f, { id: 'walls', parent: 'house' });
+  const exact = { exact: { position: { x: 8, y: 3.2, z: 12 }, lookAt: { x: 0, y: 2.3, z: 0 }, focalMm: 35 } };
+  const plan = f.apply('frame_shot', { subjectIds: ['house'], framing: exact });
+  assert.deepEqual(f.state.camera.position, exact.exact.position);
+  assert.deepEqual(f.state.camera.lookAt, exact.exact.lookAt);
+  assert.equal(plan.domain, 'shot');
+  assert.equal(plan.details.subjectIds[0], 'house');
+});
+
 test('framing: measured occlusion and camera side instead of an unmeasured warning', () => {
   const exact = position => ({ exact: { position, lookAt: { x: 0, y: 1, z: 0 }, focalMm: 35 } });
   const f = fixture(), clear = f.prepare('frame_shot', { subjectIds: ['alex'], framing: exact({ x: 0, y: 1.6, z: 5 }) });

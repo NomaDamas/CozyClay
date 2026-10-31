@@ -160,7 +160,7 @@ async function fixture({ readOnly = false, supervisorReply = JSON.stringify(VERD
 	const hub = {
 		async command(name, args) {
 			commands.push({ name, args });
-			if (name === "arrange_objects") return { ...receiptFixture(), affectedIds: ["chair", "shot-2"] };
+			if (name === "arrange_objects" || (name === "run_action" && args.args?.action === "objects.arrange")) return { ...receiptFixture(), affectedIds: ["chair", "shot-2"] };
 			if (name === "inspect_studio" && args.scope === "actions") return { revision: { scene: 42 }, actions: ACTION_SCHEMAS.filter(row => args.ids.includes(row.id)) };
 			if (name === "inspect_studio") return { revision: { scene: 41 }, entities: [] };
 			if (name === "verify_result") return { receiptId: null, revision: 42, checks: { coverage: "current-scene-targets" }, visualRefs: [], geometry: { subjects: [], pairs: [], shots: [{ shotId: "shot-2", subjectIds: [], camera: null, cameraSide: null, occluders: [] }], axisConsistent: null } };

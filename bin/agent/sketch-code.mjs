@@ -12,6 +12,7 @@ const OPENERS = { "{": "}", "(": ")", "[": "]" };
 const REGEX_AFTER = /(?:^|[(,=:[!&|?{};+\-*%<>~^])$/;
 const REGEX_WORDS = new Set(["return", "typeof", "case", "do", "else", "in", "of", "void", "delete", "throw", "new", "await", "yield"]);
 const DECLARED = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=|,\s*([A-Za-z_$][\w$]*)\s*=\s*[[{]/g;
+const DECLARED_FUNCTIONS = /\b(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(/g;
 
 /** A JSON string body decoded up to its closing quote, or up to the last whole character while it is still streaming. */
 function decodeStreamed(body) {
@@ -137,8 +138,8 @@ export function runnablePrefix(code, { after = 0, whole = false } = {}) {
 		const text = code.slice(0, end), scanned = scanCode(text);
 		if (!scanned || !text.trim()) continue;
 		const body = hoisted(text, scanned.declarations);
-		if (compiles(`${body}\n${scanned.close}`)) return { end, source: `${body}\n${scanned.close}` };
-		if (scanned.close && compiles(body)) return { end, source: body };
+		if (compiles(`${body}\n${scanned.close}`)) return { start: after, end, source: `${body}\n${scanned.close}` };
+		if (scanned.close && compiles(body)) return { start: after, end, source: body };
 	}
 	return null;
 }
@@ -147,5 +148,14 @@ export function runnablePrefix(code, { after = 0, whole = false } = {}) {
 export function declaredNames(source) {
 	const names = new Set();
 	for (const match of source.matchAll(DECLARED)) if (names.size < 40) names.add(match[1] ?? match[2]);
+	for (const match of source.matchAll(DECLARED_FUNCTIONS)) if (names.size < 40) names.add(match[1]);
 	return [...names].filter((name) => !name.startsWith("__cozy"));
+}
+
+/** Only the newly arrived statements, with their open blocks closed and declarations hoisted. */
+export function statementDelta(code, cut) {
+	const text = code.slice(cut.start, cut.end), scanned = scanCode(text);
+	if (!scanned) return cut.source;
+	const body = hoisted(text, scanned.declarations);
+	return `${body}\n${scanned.close}`;
 }

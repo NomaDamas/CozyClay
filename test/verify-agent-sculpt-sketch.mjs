@@ -46,7 +46,7 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 // 1. The real 8.4 KB script, streamed with pi-ai's partial arguments: the sketch grows, then names and places the stall.
 {
 	const { sketch, frames } = await streamCall({ name: "script", args: { code: stallCall.code } });
-	assert.ok(frames.length >= 6, `the stall grows over several frames (${frames.length})`);
+	assert.ok(frames.length >= 6, `the stall grows over several frames (${frames.length}: ${frames.map(partCount).join(",")})`);
 	assert.ok(frames.every((frame) => frame.type === "sculpt.sketch" && frame.index === 0 && frame.callId === "call-1"));
 	const counts = frames.map(partCount);
 	for (let at = 1; at < counts.length; at += 1) assert.ok(counts[at] >= counts[at - 1], `parts never shrink while it streams: ${counts.join(" ")}`);
@@ -94,7 +94,7 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 	assert.deepEqual(scanCode("const S = [];\nlet t = 1;\nfor (const z of S) {}").declarations, [0, 14]);
 	assert.equal(runnablePrefix("const S = [];\nS.push({ id: 'a', size: [0.3", {}).source.trim(), "var   S = [];");
 	assert.equal(runnablePrefix("syntax error here (((\n", {}), null);
-	assert.deepEqual(declaredNames("var   S = [], D = [];\nfunction f() { const c = 1; }"), ["S", "D", "c"]);
+	assert.deepEqual(declaredNames("var   S = [], D = [];\nfunction f() { const c = 1; }"), ["S", "D", "c", "f"]);
 	assert.equal(streamedCode({ arguments: {} }, `{"code":"const a = \\"q\\\\n\\";\\nS.pu`), "const a = \"q\\n\";\nS.pu");
 	assert.equal(streamedCode({ arguments: {} }, "{\"code\":\"x\\u00"), "x");
 }
@@ -138,10 +138,12 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 	assert.ok(counts.length >= 3 && counts.every((count, at) => !at || count >= counts[at - 1]), counts.join(" "));
 	assert.ok(counts.slice(0, -1).every((count) => count < 6));
 	assert.deepEqual(frames.at(-1).groups, [{ key: "d", name: "Bench", placement: { x: 1, y: 0, z: 2, rot: 90 }, parts: parts.map((part, n) => ({ id: `leg${n}`, shape: "cylinder", size: [0.05, 0.4, 0.05], position: [n * 0.1, 0.2, 0].map((value) => Math.round(value * 1e4) / 1e4) })) }]);
-	// Other actions and tools are never sketched.
+	// A catalogue add uses the same preview; read-only tools never sketch.
 	const other = await streamCall({ name: "run_action", args: { action: "object.add", args: { kind: "cube" } } });
+	assert.equal(partCount(other.frames.at(-1)), 1);
+	assert.equal(other.frames.at(-1).groups[0].parts[0].shape, "box");
 	const inspect = await streamCall({ name: "inspect_studio", args: { scope: "document" } });
-	assert.deepEqual([...other.frames, ...inspect.frames], []);
+	assert.deepEqual(inspect.frames, []);
 }
 
 // 6. turn-frames.mjs carries the sketch beside tool.compose.
@@ -195,4 +197,50 @@ async function streamCall({ name, args, id = "call-1", chunk = 60, stepMs = 120,
 	assert.deepEqual(drawn.find((part) => part.id === "hand.mirror").matrix.slice(12, 15), [-0.8, 0, 0]);
 }
 
-console.log("PASS verify-agent-sculpt-sketch: a real 8 KB script sketches as it streams (60 parts, placed), two sculpts group, direct calls, caps, no tools, broken code, clears, browser lifecycle");
+// 8. Ordinary scene arrangements grow while their ops stream: world placement, scale and primitive shapes carry over.
+{
+	const args = { ops: [
+		{ op: "create", source: { kind: "cube" }, name: "Crate", position: { world: { x: 1, y: 0, z: 2 } }, scale: { x: 2, y: 1, z: 1 }, rotationDeg: { x: 0, y: 90, z: 0 } },
+		{ op: "create", source: { kind: "sphere" }, name: "Ball", position: { world: { x: -1, y: 0, z: 2 } } },
+		{ op: "create", source: { kind: "empty" }, name: "No geometry" },
+		{ op: "create", source: { kind: "cube" }, name: "Needs live relation", position: { relativeTo: "Crate", side: "left", gapM: 1 } },
+	] };
+	const { frames } = await streamCall({ name: "arrange_objects", args, chunk: 100, stepMs: 300 });
+	assert.ok(frames.length >= 2 && partCount(frames.at(-1)) === 2);
+	const last = frames.at(-1);
+	assert.deepEqual(last.groups[0].placement, { x: 1, y: 0, z: 2, rot: 90 });
+	assert.deepEqual(last.groups[0].parts[0], { id: "body", shape: "box", size: [2, 1, 1], position: [0, 0.5, 0] });
+	assert.equal(last.groups[1].parts[0].shape, "blob");
+	assert.ok(!last.groups.some(group => group.name === "No geometry"), "an Empty never becomes fake geometry");
+	assert.ok(!last.groups.some(group => group.name === "Needs live relation"), "a relation is never guessed at the origin");
+}
+
+// 9. A script dry run also records arrangements and direct cast adds, without executing a real tool.
+{
+	const code = `await tools.arrange_objects({ ops: [{ op: "create", source: { kind: "cylinder" }, name: "Column", position: { world: { x: 2, y: 0, z: -1 } } }] });
+	await tools.run_action({ action: "objects.batch", args: { ops: [{ name: "object.add", args: { kind: "cube", name: "Batched crate", placement: { x: 4, y: 0, z: 1 } } }] } });
+	await tools.run_action({ action: "character.add", args: { character: { subject: "Alex", x: 0, y: 0, z: 3, rot: 45, scale: 1, tint: "#ff0000" } } });`;
+	const { frames } = await streamCall({ name: "script", args: { code }, parsed: false, chunk: 70 });
+	const last = frames.at(-1);
+	assert.equal(last.groups.length, 3);
+	assert.equal(findPart(last, "body").shape, "cylinder");
+	assert.deepEqual(last.groups.find(group => group.name === "Batched crate").placement, { x: 4, y: 0, z: 1, rot: 0 });
+	const alex = last.groups.find(group => group.name === "Alex");
+	assert.deepEqual(alex.placement, { x: 0, y: 0, z: 3, rot: 45 });
+	assert.deepEqual(alex.parts[0], { id: "body", shape: "blob", size: [0.7, 1.8, 0.7], position: [0, 0.9, 0], color: "#ff0000" });
+	const direct = await streamCall({ name: "run_action", args: { action: "objects.batch", args: { ops: [{ name: "object.add", args: { kind: "sphere", name: "Direct batch", placement: { x: 1, y: 0, z: 1 } } }] } } });
+	assert.equal(partCount(direct.frames.at(-1)), 1);
+	assert.equal(direct.frames.at(-1).groups[0].name, "Direct batch");
+}
+
+// 10. More than sixteen creation calls still arrive one by one; no early-call cutoff.
+{
+	const code = Array.from({ length: 24 }, (_, i) => `await tools.run_action({ action: "object.add", args: { kind: "cube", name: "Part ${i}", placement: { x: ${i * 0.25}, y: 0, z: 0 } } });`).join("\n");
+	const { frames } = await streamCall({ name: "script", args: { code }, parsed: false, chunk: 55, stepMs: 300 });
+	assert.ok(frames.length >= 3, JSON.stringify(frames.map(partCount)));
+	assert.equal(partCount(frames.at(-1)), 24);
+	assert.ok(partCount(frames.at(-2)) < 24, "parts accumulate while more code streams");
+	assert.deepEqual(frames.at(-1).groups.at(-1).placement, { x: 5.75, y: 0, z: 0, rot: 0 });
+}
+
+console.log("PASS verify-agent-sculpt-sketch: sculpts, scene primitives and characters sketch as they stream; dry runs, caps, no tools, broken code and browser lifecycle");

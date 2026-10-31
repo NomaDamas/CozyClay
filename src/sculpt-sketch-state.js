@@ -1,5 +1,5 @@
-// The live sketch of the running agent turn: the sculpt parts a tool call has written so far, as the sidecar's
-// sculpt.sketch frames carry them (bin/agent/sculpt-sketch.mjs), for sculpt-sketch.jsx to draw as ghost clay.
+// The live sketch of the running agent turn: the sculpt, primitive and character creations a tool call has
+// written so far, as the sidecar's sculpt.sketch frames carry them (bin/agent/sculpt-sketch.mjs), drawn as ghost clay.
 // In-page only and per turn: nothing here is saved, undone, exported or sent to the agent. A call's sketch goes
 // when its tool.done arrives (the real objects are in the scene by then, or were refused), and everything goes
 // when the turn ends, fails or is stopped (agent-client.js clears it), so no ghost outlives its turn.
